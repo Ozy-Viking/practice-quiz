@@ -142,10 +142,10 @@ pub struct QuestionResult {
     pub status: QuestionStatus,
     pub score: f64,
     pub max_score: f64,
-    pub selected_labels: Vec<String>,
-    pub correct_labels: Vec<String>,
-    pub missed_correct_labels: Vec<String>,
-    pub wrong_selected_labels: Vec<String>,
+    pub selected_answers: Vec<(String, String)>,
+    pub correct_answers: Vec<(String, String)>,
+    pub missed_correct_answers: Vec<(String, String)>,
+    pub wrong_selected_answers: Vec<(String, String)>,
     pub metadata: QuestionMetadata,
 }
 
@@ -177,7 +177,8 @@ pub const EXAMPLE_QUIZ_JSON: &str = r#"{
       "incorrect_answers": ["Wrong A", "Wrong B", "Wrong C"],
       "metadata": {
         "topic": "Chapter 1",
-        "study_location": "Week 1, slide 4",
+        "study_location": "Week 1",
+        "timestamp": "slide 4",
         "explanation": "Because..."
       }
     }
@@ -194,12 +195,6 @@ pub fn validate_quiz(quiz: &QuizFile) -> Result<(), String> {
     }
     for q in &quiz.questions {
         let total = q.correct_answers.len() + q.incorrect_answers.len();
-        if total > 5 {
-            return Err(format!(
-                "Question \"{}\" (id: {}) has {} total answers - maximum is 5",
-                q.question, q.id, total
-            ));
-        }
         if total == 0 {
             return Err(format!(
                 "Question \"{}\" (id: {}) has no answers",
@@ -255,14 +250,23 @@ pub fn build_session(
         .into_iter()
         .map(|q| {
             let metadata = q.merged_metadata();
-            let labels = ["A", "B", "C", "D", "E"];
+            let labels: Vec<String> = (b'A'..=b'Z').map(|c| (c as char).to_string()).collect();
             let mut all_answers: Vec<(bool, String)> = q
                 .correct_answers
                 .iter()
                 .map(|a| (true, a.clone()))
                 .chain(q.incorrect_answers.iter().map(|a| (false, a.clone())))
                 .collect();
-            all_answers.shuffle(rng);
+            let is_true_false = all_answers.len() == 2 && {
+                let texts: Vec<&str> = all_answers.iter().map(|(_, t)| t.as_str()).collect();
+                texts.iter().any(|t| t.eq_ignore_ascii_case("true"))
+                    && texts.iter().any(|t| t.eq_ignore_ascii_case("false"))
+            };
+            if is_true_false {
+                all_answers.sort_by_key(|(_, t)| !t.eq_ignore_ascii_case("true"));
+            } else {
+                all_answers.shuffle(rng);
+            }
             let correct_ids: HashSet<String> = all_answers
                 .iter()
                 .enumerate()
@@ -339,29 +343,29 @@ pub fn build_results(
             config.marks_per_question,
             config.allow_negative_mark,
         );
-        let correct_labels: Vec<String> = sq
+        let correct_answers: Vec<(String, String)> = sq
             .options
             .iter()
             .filter(|(id, _, _)| sq.correct_ids.contains(id))
-            .map(|(_, l, _)| l.clone())
+            .map(|(_, l, t)| (l.clone(), t.clone()))
             .collect();
-        let selected_labels: Vec<String> = sq
+        let selected_answers: Vec<(String, String)> = sq
             .options
             .iter()
             .filter(|(id, _, _)| selected.contains(id))
-            .map(|(_, l, _)| l.clone())
+            .map(|(_, l, t)| (l.clone(), t.clone()))
             .collect();
-        let missed_correct_labels: Vec<String> = sq
+        let missed_correct_answers: Vec<(String, String)> = sq
             .options
             .iter()
             .filter(|(id, _, _)| sq.correct_ids.contains(id) && !selected.contains(id))
-            .map(|(_, l, _)| l.clone())
+            .map(|(_, l, t)| (l.clone(), t.clone()))
             .collect();
-        let wrong_selected_labels: Vec<String> = sq
+        let wrong_selected_answers: Vec<(String, String)> = sq
             .options
             .iter()
             .filter(|(id, _, _)| !sq.correct_ids.contains(id) && selected.contains(id))
-            .map(|(_, l, _)| l.clone())
+            .map(|(_, l, t)| (l.clone(), t.clone()))
             .collect();
         total_score += score;
         total_max += max;
@@ -371,10 +375,10 @@ pub fn build_results(
             status,
             score,
             max_score: max,
-            selected_labels,
-            correct_labels,
-            missed_correct_labels,
-            wrong_selected_labels,
+            selected_answers,
+            correct_answers,
+            missed_correct_answers,
+            wrong_selected_answers,
             metadata: sq.metadata.clone(),
         });
     }
@@ -509,13 +513,11 @@ mod tests {
     }
 
     #[test]
-    fn validate_quiz_rejects_more_than_5_answers() {
+    fn validate_quiz_accepts_more_than_5_answers() {
         let mut quiz = sample_quiz();
         quiz.questions[0].correct_answers = vec!["a".into(), "b".into(), "c".into()];
         quiz.questions[0].incorrect_answers = vec!["d".into(), "e".into(), "f".into()];
-        let result = validate_quiz(&quiz);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("6 total answers"));
+        assert!(validate_quiz(&quiz).is_ok());
     }
 
     #[test]
@@ -544,13 +546,19 @@ mod tests {
     #[test]
     fn build_session_respects_count() {
         let mut rng = SmallRng::from_seed([0u8; 32]);
-        assert_eq!(build_session(&sample_quiz().questions, 2, &mut rng).len(), 2);
+        assert_eq!(
+            build_session(&sample_quiz().questions, 2, &mut rng).len(),
+            2
+        );
     }
 
     #[test]
     fn build_session_clamps_count() {
         let mut rng = SmallRng::from_seed([0u8; 32]);
-        assert_eq!(build_session(&sample_quiz().questions, 100, &mut rng).len(), 3);
+        assert_eq!(
+            build_session(&sample_quiz().questions, 100, &mut rng).len(),
+            3
+        );
     }
 
     #[test]
@@ -642,8 +650,8 @@ mod tests {
     #[test]
     fn example_quiz_json_parses_and_validates() {
         let json = EXAMPLE_QUIZ_JSON.replace("SCHEMA_URL", "");
-        let quiz: QuizFile = serde_json::from_str(&json)
-            .expect("EXAMPLE_QUIZ_JSON should parse as QuizFile");
+        let quiz: QuizFile =
+            serde_json::from_str(&json).expect("EXAMPLE_QUIZ_JSON should parse as QuizFile");
         validate_quiz(&quiz).expect("EXAMPLE_QUIZ_JSON should pass validate_quiz");
     }
 

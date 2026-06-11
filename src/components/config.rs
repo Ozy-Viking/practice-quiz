@@ -31,10 +31,37 @@ pub fn ConfiguringView(
 
     let init_topics: HashSet<String> = all_topics.iter().cloned().collect();
     let init_locs: HashSet<String> = all_locations.iter().cloned().collect();
-    let selected_topics: Signal<HashSet<String>> = use_signal(move || init_topics);
+    let mut selected_topics: Signal<HashSet<String>> = use_signal(move || init_topics);
     let selected_locations: Signal<HashSet<String>> = use_signal(move || init_locs);
     let topic_regex_input: Signal<String> = use_signal(String::new);
     let location_regex_input: Signal<String> = use_signal(String::new);
+
+    // One-way sync: when location selection changes, update topic selection to only the topics
+    // that exist in those locations. This effect subscribes to selected_locations only — it never
+    // reads selected_topics — so writing selected_topics here cannot re-trigger this effect.
+    {
+        let q2 = q.clone();
+        let all_locs2 = all_locations.clone();
+        let all_topics2 = all_topics.clone();
+        use_effect(move || {
+            let sl = selected_locations.read().clone();
+            let new_selection: HashSet<String> = if sl.is_empty() || sl.len() == all_locs2.len() {
+                all_topics2.iter().cloned().collect()
+            } else {
+                q2.questions
+                    .iter()
+                    .filter(|qq| {
+                        qq.metadata
+                            .study_location
+                            .as_ref()
+                            .is_none_or(|l| sl.contains(l))
+                    })
+                    .filter_map(|qq| qq.metadata.topic.clone())
+                    .collect()
+            };
+            selected_topics.set(new_selection);
+        });
+    }
 
     let topic_re_str = topic_regex_input.read().clone();
     let location_re_str = location_regex_input.read().clone();
@@ -112,19 +139,6 @@ pub fn ConfiguringView(
             }
             p { class: "mark-value", "Each question is worth {marks_per_question:.1} marks" }
 
-            if all_topics.len() >= 2 {
-                FilterSection {
-                    title: "Filter by Topic",
-                    selected: selected_topics,
-                    regex_input: topic_regex_input,
-                    all_values: all_topics.clone(),
-                    matched_chips: topic_matched_chips,
-                    regex_active: topic_regex_active,
-                    regex_valid: topic_re_valid,
-                    placeholder: "regex (e.g. Chapter [1-3])",
-                }
-            }
-
             if all_locations.len() >= 2 {
                 FilterSection {
                     title: "Filter by Location",
@@ -135,6 +149,19 @@ pub fn ConfiguringView(
                     regex_active: location_regex_active,
                     regex_valid: location_re_valid,
                     placeholder: "regex (e.g. Week [1-3])",
+                }
+            }
+
+            if all_topics.len() >= 2 {
+                FilterSection {
+                    title: "Filter by Topic",
+                    selected: selected_topics,
+                    regex_input: topic_regex_input,
+                    all_values: all_topics.clone(),
+                    matched_chips: topic_matched_chips,
+                    regex_active: topic_regex_active,
+                    regex_valid: topic_re_valid,
+                    placeholder: "regex (e.g. Chapter [1-3])",
                 }
             }
 

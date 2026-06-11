@@ -465,7 +465,7 @@ h2 {
 
 .detail-row {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: 8px;
   font-size: 0.82rem;
 }
@@ -473,13 +473,32 @@ h2 {
 .detail-label {
   font-weight: 600;
   min-width: 64px;
+  padding-top: 4px;
   color: var(--text-muted);
 }
 
 .detail-values {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 4px;
+}
+
+.answer-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.answer-label {
+  font-weight: 700;
+  font-size: 0.75rem;
+  min-width: 1.2em;
+}
+
+.answer-text {
+  font-size: 0.82rem;
 }
 
 .badge {

@@ -68,42 +68,54 @@ pub fn ResultsView(
                             }
                             p { class: "result-question", "{qr.text}" }
                             div { class: "result-details",
-                                if !qr.correct_labels.is_empty() {
+                                if !qr.correct_answers.is_empty() {
                                     div { class: "detail-row correct-row",
                                         span { class: "detail-label", "Correct:" }
-                                        span { class: "detail-values",
-                                            for label in qr.correct_labels.iter() {
-                                                span { class: "badge badge-correct", "{label}" }
+                                        div { class: "detail-values",
+                                            for (label, text) in qr.correct_answers.iter() {
+                                                div { class: "answer-entry badge-correct",
+                                                    span { class: "answer-label", "{label}" }
+                                                    span { class: "answer-text", "{text}" }
+                                                }
                                             }
                                         }
                                     }
                                 }
-                                if !qr.missed_correct_labels.is_empty() {
+                                if !qr.missed_correct_answers.is_empty() {
                                     div { class: "detail-row missed-row",
                                         span { class: "detail-label", "Missed:" }
-                                        span { class: "detail-values",
-                                            for label in qr.missed_correct_labels.iter() {
-                                                span { class: "badge badge-missed", "{label}" }
+                                        div { class: "detail-values",
+                                            for (label, text) in qr.missed_correct_answers.iter() {
+                                                div { class: "answer-entry badge-missed",
+                                                    span { class: "answer-label", "{label}" }
+                                                    span { class: "answer-text", "{text}" }
+                                                }
                                             }
                                         }
                                     }
                                 }
-                                if !qr.wrong_selected_labels.is_empty() {
+                                if !qr.wrong_selected_answers.is_empty() {
                                     div { class: "detail-row wrong-row",
                                         span { class: "detail-label", "Wrong:" }
-                                        span { class: "detail-values",
-                                            for label in qr.wrong_selected_labels.iter() {
-                                                span { class: "badge badge-wrong", "{label}" }
+                                        div { class: "detail-values",
+                                            for (label, text) in qr.wrong_selected_answers.iter() {
+                                                div { class: "answer-entry badge-wrong",
+                                                    span { class: "answer-label", "{label}" }
+                                                    span { class: "answer-text", "{text}" }
+                                                }
                                             }
                                         }
                                     }
                                 }
-                                if !qr.selected_labels.is_empty() {
+                                if !qr.selected_answers.is_empty() {
                                     div { class: "detail-row selected-row",
                                         span { class: "detail-label", "You chose:" }
-                                        span { class: "detail-values",
-                                            for label in qr.selected_labels.iter() {
-                                                span { class: "badge badge-selected", "{label}" }
+                                        div { class: "detail-values",
+                                            for (label, text) in qr.selected_answers.iter() {
+                                                div { class: "answer-entry badge-selected",
+                                                    span { class: "answer-label", "{label}" }
+                                                    span { class: "answer-text", "{text}" }
+                                                }
                                             }
                                         }
                                     }

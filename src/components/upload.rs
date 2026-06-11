@@ -2,6 +2,8 @@ use dioxus::prelude::*;
 
 use crate::model::{AppPhase, QuizFile, initial_question_count, validate_quiz, EXAMPLE_QUIZ_JSON};
 
+const SCHEMA_JSON: &str = include_str!("../../assets/quiz-schema.json");
+
 // Ensure the schema file is included in the build without a hash suffix.
 #[used]
 static SCHEMA_ASSET: Asset = asset!(
@@ -38,6 +40,58 @@ fn copy_to_clipboard(text: String, mut copied: Signal<bool>) {
     });
 }
 
+struct FieldRow {
+    name: String,
+    type_label: String,
+    required: bool,
+    description: String,
+}
+
+fn prop_type_label(prop: &serde_json::Value) -> String {
+    if prop.get("$ref").is_some() {
+        return "object".to_string();
+    }
+    match prop.get("type").and_then(|t| t.as_str()) {
+        Some("array") => {
+            let item_type = prop["items"]
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("object");
+            format!("{item_type}[]")
+        }
+        Some(t) => t.to_string(),
+        None => String::new(),
+    }
+}
+
+/// Extract field rows from a properties object inside the schema.
+/// `required_names` marks fields as required regardless of the schema `required` array.
+/// Fields whose description begins with "Alias for" are skipped (they're camelCase aliases).
+fn fields_from_props(
+    props: &serde_json::Value,
+    required_names: &[&str],
+) -> Vec<FieldRow> {
+    let req: std::collections::HashSet<&str> = required_names.iter().cloned().collect();
+    let Some(map) = props.as_object() else {
+        return vec![];
+    };
+    map.iter()
+        .filter(|(name, prop)| {
+            // Drop the bare $schema entry and any camelCase alias fields
+            *name != "$schema"
+                && prop["description"]
+                    .as_str()
+                    .map_or(true, |d| !d.starts_with("Alias for"))
+        })
+        .map(|(name, prop)| FieldRow {
+            name: name.clone(),
+            type_label: prop_type_label(prop),
+            required: req.contains(name.as_str()),
+            description: prop["description"].as_str().unwrap_or("").to_string(),
+        })
+        .collect()
+}
+
 #[component]
 pub fn UploadView(
     mut phase: Signal<AppPhase>,
@@ -50,6 +104,21 @@ pub fn UploadView(
     let copied = use_signal(|| false);
     let url = schema_url();
     let example_json = EXAMPLE_QUIZ_JSON.replace("SCHEMA_URL", &url);
+
+    // Parse schema once; used only when the format reference panel is open.
+    let schema: serde_json::Value =
+        serde_json::from_str(SCHEMA_JSON).unwrap_or(serde_json::Value::Null);
+
+    let top_fields = fields_from_props(&schema["properties"], &["questions"]);
+    let config_fields =
+        fields_from_props(&schema["definitions"]["QuizConfig"]["properties"], &[]);
+    // correct_answers + incorrect_answers are required via oneOf in the schema
+    let question_fields = fields_from_props(
+        &schema["definitions"]["QuizQuestion"]["properties"],
+        &["id", "question", "correct_answers", "incorrect_answers"],
+    );
+    let metadata_fields =
+        fields_from_props(&schema["definitions"]["QuestionMetadata"]["properties"], &[]);
 
     rsx! {
         div { class: "card upload-card",
@@ -137,136 +206,39 @@ pub fn UploadView(
                         }
 
                         div { class: "field-ref",
-                            div { class: "field-ref-section",
-                                div { class: "field-ref-heading", "Top-level" }
-                                div { class: "field-ref-row",
-                                    code { "title" }
-                                    span { class: "field-ref-type", "string" }
-                                    span { "Display name shown in the quiz header." }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "questions" }
-                                    span { class: "field-ref-type field-ref-required", "array  required" }
-                                    span { "List of question objects (see below)." }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "config" }
-                                    span { class: "field-ref-type", "object" }
-                                    span { "Scoring and display settings (see below)." }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "marks_per_question" }
-                                    span { class: "field-ref-type", "number" }
-                                    span { "Shorthand override for config.marks_per_question." }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "negative_marks" }
-                                    span { class: "field-ref-type", "boolean" }
-                                    span { "Shorthand override for config.allow_negative_mark." }
-                                }
-                            }
-                            div { class: "field-ref-section",
-                                div { class: "field-ref-heading", "config" }
-                                div { class: "field-ref-row",
-                                    code { "marks_per_question" }
-                                    span { class: "field-ref-type", "number" }
-                                    span { "Points awarded for a fully correct answer. Default: 1.0." }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "allow_negative_mark" }
-                                    span { class: "field-ref-type", "boolean" }
-                                    span { "Allow scores below zero for wrong selections. Default: false." }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "default_question_count" }
-                                    span { class: "field-ref-type", "integer" }
-                                    span { "Pre-fills the question count input on the config screen." }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "description" }
-                                    span { class: "field-ref-type", "string" }
-                                    span { "Optional description displayed on the config screen." }
-                                }
-                            }
-                            div { class: "field-ref-section",
-                                div { class: "field-ref-heading", "questions[ ]" }
-                                div { class: "field-ref-row",
-                                    code { "id" }
-                                    span { class: "field-ref-type field-ref-required", "string  required" }
-                                    span { "Unique identifier for this question." }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "question" }
-                                    span { class: "field-ref-type field-ref-required", "string  required" }
-                                    span { "Question text displayed to the user." }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "correct_answers" }
-                                    span { class: "field-ref-type field-ref-required", "string[]  required" }
-                                    span {
-                                        "One or more correct answer strings. Alias: "
-                                        code { "correctAnswers" }
-                                        "."
-                                    }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "incorrect_answers" }
-                                    span { class: "field-ref-type field-ref-required", "string[]  required" }
-                                    span {
-                                        "Wrong answer strings. Alias: "
-                                        code { "incorrectAnswers" }
-                                        ". Total answers ≤ 5."
-                                    }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "explanation" }
-                                    span { class: "field-ref-type", "string" }
-                                    span { "Explanation shown after submission. Shorthand for metadata.explanation." }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "metadata" }
-                                    span { class: "field-ref-type", "object" }
-                                    span {
-                                        "Study metadata. Alias: "
-                                        code { "hiddenInfo" }
-                                        " (see below)."
-                                    }
-                                }
-                            }
-                            div { class: "field-ref-section",
-                                div { class: "field-ref-heading", "metadata" }
-                                div { class: "field-ref-row",
-                                    code { "topic" }
-                                    span { class: "field-ref-type", "string" }
-                                    span { "Subject area. Used by the Topic filter on the config screen." }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "study_location" }
-                                    span { class: "field-ref-type", "string" }
-                                    span { "Where this was taught (e.g. \"Week 3, slide 7\"). Used by the Location filter." }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "explanation" }
-                                    span { class: "field-ref-type", "string" }
-                                    span { "Explanation shown in the results study-info panel." }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "notes" }
-                                    span { class: "field-ref-type", "string" }
-                                    span { "Additional study notes. Shown if no explanation is set." }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "answer" }
-                                    span { class: "field-ref-type", "string" }
-                                    span { "Original answer key reference. Shown in the results study-info panel." }
-                                }
-                                div { class: "field-ref-row",
-                                    code { "timestamp" }
-                                    span { class: "field-ref-type", "string" }
-                                    span { "Timestamp or slide reference. Shown in the results study-info panel." }
-                                }
-                            }
+                            {field_ref_section("Top-level", &top_fields)}
+                            {field_ref_section("config", &config_fields)}
+                            {field_ref_section("questions[ ]", &question_fields)}
+                            {field_ref_section("metadata", &metadata_fields)}
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn field_ref_section(heading: &str, rows: &[FieldRow]) -> Element {
+    rsx! {
+        div { class: "field-ref-section",
+            div { class: "field-ref-heading", "{heading}" }
+            for row in rows {
+                div { class: "field-ref-row",
+                    code { "{row.name}" }
+                    span {
+                        class: if row.required {
+                            "field-ref-type field-ref-required"
+                        } else {
+                            "field-ref-type"
+                        },
+                        if row.required {
+                            "{row.type_label}  required"
+                        } else {
+                            "{row.type_label}"
+                        }
+                    }
+                    if !row.description.is_empty() {
+                        span { "{row.description}" }
                     }
                 }
             }
