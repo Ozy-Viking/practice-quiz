@@ -609,6 +609,35 @@ h2 {
   font-size: 0.76rem;
 }
 
+.example-wrapper {
+  position: relative;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  padding: 0.15rem 0.55rem;
+  font-size: 0.7rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  z-index: 1;
+}
+
+.example-wrapper:hover .copy-btn,
+.copy-btn.copied {
+  opacity: 1;
+}
+
+.copy-btn.copied {
+  color: var(--success, #4ade80);
+}
+
 .format-example {
   background: var(--surface-raised);
   border: 1px solid var(--border);

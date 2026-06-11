@@ -159,6 +159,31 @@ pub enum AppPhase {
     Submitted,
 }
 
+/// Canonical example used in the upload screen and validated by tests.
+/// The component replaces `SCHEMA_URL` with the live origin URL at render time.
+pub const EXAMPLE_QUIZ_JSON: &str = r#"{
+  "$schema": "SCHEMA_URL",
+  "title": "My Quiz",
+  "config": {
+    "marks_per_question": 1.0,
+    "allow_negative_mark": false,
+    "default_question_count": 20
+  },
+  "questions": [
+    {
+      "id": "q1",
+      "question": "Question text?",
+      "correct_answers": ["Right answer"],
+      "incorrect_answers": ["Wrong A", "Wrong B", "Wrong C"],
+      "metadata": {
+        "topic": "Chapter 1",
+        "study_location": "Week 1, slide 4",
+        "explanation": "Because..."
+      }
+    }
+  ]
+}"#;
+
 pub fn validate_quiz(quiz: &QuizFile) -> Result<(), String> {
     let config = quiz.effective_config();
     if config.marks_per_question <= 0.0 {
@@ -612,6 +637,14 @@ mod tests {
         assert_eq!(results.len(), 3);
         assert!(total >= 0.0);
         assert_eq!(max, 6.0);
+    }
+
+    #[test]
+    fn example_quiz_json_parses_and_validates() {
+        let json = EXAMPLE_QUIZ_JSON.replace("SCHEMA_URL", "");
+        let quiz: QuizFile = serde_json::from_str(&json)
+            .expect("EXAMPLE_QUIZ_JSON should parse as QuizFile");
+        validate_quiz(&quiz).expect("EXAMPLE_QUIZ_JSON should pass validate_quiz");
     }
 
     #[test]

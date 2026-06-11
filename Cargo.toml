@@ -12,7 +12,8 @@ regex = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
-web-sys = { version = "0.3", features = ["Window", "Location"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "Navigator", "Clipboard"] }
+wasm-bindgen-futures = "0.4"
 
 [dev-dependencies]
 rand = { version = "0.8", features = ["small_rng"] }

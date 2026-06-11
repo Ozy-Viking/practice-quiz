@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::model::{AppPhase, QuizFile, initial_question_count, validate_quiz};
+use crate::model::{AppPhase, QuizFile, initial_question_count, validate_quiz, EXAMPLE_QUIZ_JSON};
 
 // Ensure the schema file is included in the build without a hash suffix.
 #[used]
@@ -13,14 +13,29 @@ fn schema_url() -> String {
     #[cfg(target_arch = "wasm32")]
     {
         web_sys::window()
-            .and_then(|w| w.location().origin().ok())
-            .map(|origin| format!("{origin}/assets/quiz-schema.json"))
+            .and_then(|w| w.location().href().ok())
+            .map(|href| {
+                let base = href.trim_end_matches('/');
+                format!("{base}/assets/quiz-schema.json")
+            })
             .unwrap_or_else(|| "/assets/quiz-schema.json".to_string())
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
         "/assets/quiz-schema.json".to_string()
     }
+}
+
+fn copy_to_clipboard(text: String, mut copied: Signal<bool>) {
+    spawn(async move {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(clipboard) = web_sys::window().map(|w| w.navigator().clipboard()) {
+            let _ = wasm_bindgen_futures::JsFuture::from(clipboard.write_text(&text)).await;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = text;
+        copied.set(true);
+    });
 }
 
 #[component]
@@ -32,31 +47,9 @@ pub fn UploadView(
     mut load_error: Signal<String>,
 ) -> Element {
     let mut show_format = use_signal(|| false);
+    let copied = use_signal(|| false);
     let url = schema_url();
-    let example_json = format!(
-        r#"{{
-  "$schema": "{url}",
-  "title": "My Quiz",
-  "config": {{
-    "marks_per_question": 1.0,
-    "allow_negative_mark": false,
-    "default_question_count": 20
-  }},
-  "questions": [
-    {{
-      "id": "q1",
-      "question": "Question text?",
-      "correct_answers": ["Right answer"],
-      "incorrect_answers": ["Wrong A", "Wrong B", "Wrong C"],
-      "metadata": {{
-        "topic": "Chapter 1",
-        "study_location": "Week 1, slide 4",
-        "explanation": "Because..."
-      }}
-    }}
-  ]
-}}"#
-    );
+    let example_json = EXAMPLE_QUIZ_JSON.replace("SCHEMA_URL", &url);
 
     rsx! {
         div { class: "card upload-card",
@@ -130,7 +123,18 @@ pub fn UploadView(
                             }
                         }
 
-                        pre { class: "format-example", "{example_json}" }
+                        div { class: "example-wrapper",
+                            button {
+                                class: if *copied.read() { "copy-btn copied" } else { "copy-btn" },
+                                r#type: "button",
+                                onclick: {
+                                    let text = example_json.clone();
+                                    move |_| copy_to_clipboard(text.clone(), copied)
+                                },
+                                if *copied.read() { "✓ Copied" } else { "Copy" }
+                            }
+                            pre { class: "format-example", "{example_json}" }
+                        }
 
                         div { class: "field-ref",
                             div { class: "field-ref-section",
