@@ -1,0 +1,51 @@
+{
+	"title": "Security, Ethics and Professionalism Practice Quiz",
+	"config": {
+		"marks_per_question": 2,
+		"allow_negative_mark": false
+	},
+	"questions": [
+		{
+			"id": "MCQ-1",
+			"question": "Which statements correctly describe foundational information security concepts? Select one or more.",
+			"correct_answers": [
+				"The three communities of interest are InfoSec, IT, and general business.",
+				"The C.I.A. triangle consists of confidentiality, integrity, and availability."
+			],
+			"incorrect_answers": [
+				"Confidentiality means information is complete, accurate, and uncorrupted.",
+				"Availability means information should be accessible to every person in the organization without restriction.",
+				"Accountability means avoiding logs so that user privacy is never affected."
+			],
+			"metadata": {
+				"study_location": "Week 13, slide 4",
+				"timestamp": "",
+				"topic": "",
+				"answer": "",
+				"explanation": "",
+				"notes": "The three communities of interest are InfoSec, IT, and general business. The C.I.A. triangle is confidentiality, integrity, and availability. Confidentiality is about authorised access, while integrity is about accuracy and completeness. Availability is for authorised users, not unrestricted access. Accountability is usually supported by logging and auditing."
+			}
+		},
+		{
+			"id": "MCQ-2",
+			"question": "Which statement correctly describes project management in the InfoSec context? Select one or more.",
+			"correct_answers": [
+				"A work breakdown structure decomposes project work into manageable tasks or components."
+			],
+			"incorrect_answers": [
+				"POSDC and POLC are exactly the same management model with identical components.",
+				"The six P's of InfoSec management are passwords, patching, penetration testing, privacy, protocols, and programs.",
+				"Information security is a one-off project that ends once controls are installed.",
+				"The critical path is the shortest path through the project network."
+			],
+			"metadata": {
+				"study_location": "Week 13, slide 5",
+				"timestamp": "",
+				"topic": "",
+				"answer": "",
+				"explanation": "",
+				"notes": "A WBS breaks project work into smaller, manageable components. The critical path is the longest-duration path that determines project duration."
+			}
+		}
+	]
+}

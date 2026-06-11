@@ -1,0 +1,20 @@
+[application]
+name = "practice-quiz"
+default_platform = "web"
+
+[web.app]
+title = "Practice Quiz"
+base_path = "/"
+
+[web.resource.dev]
+
+[web.resource]
+style = []
+script = []
+
+[web.watcher]
+reload_html = true
+watch_path = ["src", "assets"]
+
+[bundle]
+identifier = "io.github.practice-quiz"
