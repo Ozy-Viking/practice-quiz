@@ -4,7 +4,7 @@ default_platform = "web"
 
 [web.app]
 title = "Practice Quiz"
-base_path = "/"
+base_path = "/practice-quiz"
 
 [web.resource.dev]
 
@@ -17,4 +17,5 @@ reload_html = true
 watch_path = ["src", "assets"]
 
 [bundle]
-identifier = "io.github.practice-quiz"
+identifier = "io.hankin.practice-quiz"
+
