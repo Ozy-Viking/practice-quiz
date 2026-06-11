@@ -1967,6 +1967,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "web-sys",
 ]
 
 [[package]]
