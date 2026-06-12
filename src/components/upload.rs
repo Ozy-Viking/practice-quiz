@@ -174,16 +174,18 @@ pub fn UploadView(
                         };
                         let parsed: Result<QuizFile, _> = serde_json::from_str(&text);
                         match parsed {
-                            Ok(q) => match validate_quiz(&q) {
-                                Ok(()) => {
-                                    question_count.set(initial_question_count(&q));
-                                    file_name.set(name);
-                                    quiz.set(Some(q));
-                                    phase.set(AppPhase::Configuring);
-                                    load_error.set(String::new());
+                            Ok(q) => {
+                                match validate_quiz(&q) {
+                                    Ok(()) => {
+                                        question_count.set(initial_question_count(&q));
+                                        file_name.set(name);
+                                        quiz.set(Some(q));
+                                        phase.set(AppPhase::Configuring);
+                                        load_error.set(String::new());
+                                    }
+                                    Err(msg) => load_error.set(msg),
                                 }
-                                Err(msg) => load_error.set(msg),
-                            },
+                            }
                             Err(e) => load_error.set(format!("Invalid JSON: {e}")),
                         }
                     });
@@ -201,7 +203,13 @@ pub fn UploadView(
                         let v = *show_format.read();
                         show_format.set(!v);
                     },
-                    span { class: "format-toggle-icon", if *show_format.read() { "▾" } else { "▸" } }
+                    span { class: "format-toggle-icon",
+                        if *show_format.read() {
+                            "▾"
+                        } else {
+                            "▸"
+                        }
+                    }
                     "JSON Format Reference"
                 }
                 if *show_format.read() {
@@ -235,7 +243,11 @@ pub fn UploadView(
                                     let text = example_json.clone();
                                     move |_| copy_to_clipboard(text.clone(), example_copied)
                                 },
-                                if *example_copied.read() { "✓ Copied" } else { "Copy" }
+                                if *example_copied.read() {
+                                    "✓ Copied"
+                                } else {
+                                    "Copy"
+                                }
                             }
                             pre { class: "format-example", "{example_json}" }
                         }
@@ -260,12 +272,7 @@ fn field_ref_section(heading: &str, rows: &[FieldRow]) -> Element {
             for row in rows {
                 div { class: "field-ref-row",
                     code { "{row.name}" }
-                    span {
-                        class: if row.required {
-                            "field-ref-type field-ref-required"
-                        } else {
-                            "field-ref-type"
-                        },
+                    span { class: if row.required { "field-ref-type field-ref-required" } else { "field-ref-type" },
                         if row.required {
                             "{row.type_label}  required"
                         } else {

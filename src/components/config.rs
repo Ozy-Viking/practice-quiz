@@ -142,7 +142,9 @@ pub fn ConfiguringView(
             if allow_neg {
                 p { class: "config-flag negative-enabled", "⚠ Negative marking enabled" }
             } else {
-                p { class: "config-flag negative-disabled", "Negative marking disabled (scores clamped at 0)" }
+                p { class: "config-flag negative-disabled",
+                    "Negative marking disabled (scores clamped at 0)"
+                }
             }
             p { class: "mark-value", "Each question is worth {marks_per_question:.1} marks" }
 

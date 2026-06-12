@@ -145,7 +145,13 @@ fn App() -> Element {
                 p { class: "subtitle", "Load a JSON quiz file and test your knowledge" }
             }
             if current == AppPhase::Upload {
-                UploadView { phase, quiz, question_count, file_name, load_error }
+                UploadView {
+                    phase,
+                    quiz,
+                    question_count,
+                    file_name,
+                    load_error,
+                }
             } else if current == AppPhase::Configuring {
                 ConfiguringView {
                     phase,
@@ -158,7 +164,13 @@ fn App() -> Element {
                     question_pool,
                 }
             } else if current == AppPhase::InProgress {
-                QuizView { phase, quiz, session, selections, results }
+                QuizView {
+                    phase,
+                    quiz,
+                    session,
+                    selections,
+                    results,
+                }
             } else if current == AppPhase::Submitted {
                 ResultsView {
                     phase,

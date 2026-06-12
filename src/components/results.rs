@@ -69,11 +69,7 @@ pub fn ResultsView(
                                 rsx! {
                                     div { class: "study-summary-item",
                                         div { class: "study-summary-topline",
-                                            a {
-                                                class: "study-summary-question",
-                                                href: "#result-q-{idx + 1}",
-                                                "Q{idx + 1}: {qr.id}"
-                                            }
+                                            a { class: "study-summary-question", href: "#result-q-{idx + 1}", "Q{idx + 1}: {qr.id}" }
                                             span { class: "study-summary-score", "{qr.score:.2}/{qr.max_score:.1}" }
                                         }
                                         p { class: "study-summary-text", "{qr.text}" }
@@ -116,7 +112,8 @@ pub fn ResultsView(
                         QuestionStatus::Unanswered => "Unanswered",
                     };
                     rsx! {
-                        div { class: "result-block {status_class}",
+                        div {
+                            class: "result-block {status_class}",
                             key: "{qr.id}",
                             id: "result-q-{idx + 1}",
                             div { class: "result-header",
@@ -206,7 +203,9 @@ pub fn ResultsView(
                                         }
                                     }
                                 } else {
-                                    rsx! { div {} }
+                                    rsx! {
+                                        div {}
+                                    }
                                 }
                             }
                         }

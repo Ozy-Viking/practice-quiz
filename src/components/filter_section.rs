@@ -44,14 +44,17 @@ pub fn FilterSection(
                     span { class: "filter-regex-error", "Invalid regex" }
                 }
             }
-            div {
-                class: if regex_active { "filter-chips regex-active" } else { "filter-chips" },
+            div { class: if regex_active { "filter-chips regex-active" } else { "filter-chips" },
                 for value in all_values.iter() {
                     {
                         let v = value.clone();
                         let is_checked = selected.read().contains(&v);
                         let chip_class = if regex_active {
-                            if matched_chips.contains(&v) { "filter-chip regex-match" } else { "filter-chip regex-no-match" }
+                            if matched_chips.contains(&v) {
+                                "filter-chip regex-match"
+                            } else {
+                                "filter-chip regex-no-match"
+                            }
                         } else {
                             "filter-chip"
                         };
