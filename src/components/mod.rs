@@ -1,5 +1,5 @@
-mod filter_section;
 pub mod config;
+mod filter_section;
 pub mod quiz;
 pub mod results;
 pub mod upload;

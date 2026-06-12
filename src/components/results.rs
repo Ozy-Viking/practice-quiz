@@ -2,8 +2,12 @@ use dioxus::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    build_session, AppPhase, QuizFile, QuizQuestion, ResultsData, QuestionStatus, SessionQuestion,
+    AppPhase, QuestionStatus, QuizFile, QuizQuestion, ResultsData, SessionQuestion,
 };
+
+fn metadata_value(value: &Option<String>) -> Option<&str> {
+    value.as_deref().filter(|v| !v.trim().is_empty())
+}
 
 #[component]
 pub fn ResultsView(
@@ -28,6 +32,11 @@ pub fn ResultsView(
     } else {
         0
     };
+    let study_items: Vec<_> = res_list
+        .iter()
+        .enumerate()
+        .filter(|(_, qr)| qr.score < qr.max_score || !qr.wrong_selected_answers.is_empty())
+        .collect();
     let grade_class = if pct >= 80 {
         "grade-excellent"
     } else if pct >= 60 {
@@ -43,6 +52,54 @@ pub fn ResultsView(
                 h2 { "Final Score" }
                 div { class: "score-number", "{total_score:.1} / {total_max:.0}" }
                 div { class: "score-percent", "{pct}%" }
+            }
+            if !study_items.is_empty() {
+                div { class: "study-summary",
+                    div { class: "study-summary-header",
+                        div {
+                            h2 { "Study Review" }
+                            p { "Questions to revisit from this attempt." }
+                        }
+                        span { class: "study-summary-count", "{study_items.len()} to review" }
+                    }
+                    div { class: "study-summary-list",
+                        for (idx, qr) in study_items {
+                            {
+                                let meta = &qr.metadata;
+                                rsx! {
+                                    div { class: "study-summary-item",
+                                        div { class: "study-summary-topline",
+                                            a {
+                                                class: "study-summary-question",
+                                                href: "#result-q-{idx + 1}",
+                                                "Q{idx + 1}: {qr.id}"
+                                            }
+                                            span { class: "study-summary-score", "{qr.score:.2}/{qr.max_score:.1}" }
+                                        }
+                                        p { class: "study-summary-text", "{qr.text}" }
+                                        div { class: "study-summary-meta",
+                                            if let Some(topic) = metadata_value(&meta.topic) {
+                                                span { class: "study-summary-topic", "Topic: {topic}" }
+                                            }
+                                            if let Some(loc) = metadata_value(&meta.study_location) {
+                                                span { class: "study-summary-location", "Location: {loc}" }
+                                            }
+                                            if let Some(timestamp) = metadata_value(&meta.timestamp) {
+                                                span { "Timestamp: {timestamp}" }
+                                            }
+                                            if let Some(answer) = metadata_value(&meta.answer) {
+                                                span { "Answer key: {answer}" }
+                                            }
+                                            if !meta.has_content() {
+                                                span { "No study metadata provided" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             for (idx, qr) in res_list.iter().enumerate() {
                 {
@@ -61,6 +118,7 @@ pub fn ResultsView(
                     rsx! {
                         div { class: "result-block {status_class}",
                             key: "{qr.id}",
+                            id: "result-q-{idx + 1}",
                             div { class: "result-header",
                                 span { class: "result-number", "Q{idx + 1}" }
                                 span { class: "result-badge {status_class}", "{status_text}" }
@@ -128,21 +186,21 @@ pub fn ResultsView(
                                     rsx! {
                                         div { class: "study-info",
                                             div { class: "study-info-header", "Study Info" }
-                                            if let Some(loc) = &meta.study_location {
+                                            if let Some(loc) = metadata_value(&meta.study_location) {
                                                 p { class: "study-location", "Location: {loc}" }
                                             }
-                                            if let Some(timestamp) = &meta.timestamp {
+                                            if let Some(timestamp) = metadata_value(&meta.timestamp) {
                                                 p { class: "study-location", "Timestamp: {timestamp}" }
                                             }
-                                            if let Some(topic) = &meta.topic {
+                                            if let Some(topic) = metadata_value(&meta.topic) {
                                                 p { class: "study-topic", "Topic: {topic}" }
                                             }
-                                            if let Some(answer) = &meta.answer {
+                                            if let Some(answer) = metadata_value(&meta.answer) {
                                                 p { class: "study-answer", "Original answer key: {answer}" }
                                             }
-                                            if let Some(explanation) = &meta.explanation {
+                                            if let Some(explanation) = metadata_value(&meta.explanation) {
                                                 p { class: "study-notes", "Explanation: {explanation}" }
-                                            } else if let Some(notes) = &meta.notes {
+                                            } else if let Some(notes) = metadata_value(&meta.notes) {
                                                 p { class: "study-notes", "Notes: {notes}" }
                                             }
                                         }
@@ -173,19 +231,12 @@ pub fn ResultsView(
                 button {
                     class: "btn btn-secondary",
                     onclick: move |_| {
-                        let pool = question_pool.read().clone();
-                        if pool.is_empty() {
-                            return;
-                        }
-                        let count = *question_count.read();
-                        let mut rng = rand::thread_rng();
-                        let sess = build_session(&pool, count, &mut rng);
-                        session.set(sess);
                         selections.set(HashMap::new());
                         results.set(None);
-                        phase.set(AppPhase::InProgress);
+                        session.set(Vec::new());
+                        phase.set(AppPhase::Configuring);
                     },
-                    "🔄 Retry Same Quiz"
+                    "← Back to Settings"
                 }
             }
         }

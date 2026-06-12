@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::model::{AppPhase, QuizFile, initial_question_count, validate_quiz, EXAMPLE_QUIZ_JSON};
+use crate::model::{AppPhase, EXAMPLE_QUIZ_JSON, QuizFile, initial_question_count, validate_quiz};
 
 const SCHEMA_JSON: &str = include_str!("../../assets/quiz-schema.json");
 
@@ -16,10 +16,7 @@ fn schema_url() -> String {
     {
         web_sys::window()
             .and_then(|w| w.location().href().ok())
-            .map(|href| {
-                let base = href.trim_end_matches('/');
-                format!("{base}/assets/quiz-schema.json")
-            })
+            .and_then(|href| schema_url_from_href(&href).ok())
             .unwrap_or_else(|| "/assets/quiz-schema.json".to_string())
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -28,8 +25,42 @@ fn schema_url() -> String {
     }
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
+fn schema_url_from_href(href: &str) -> Result<String, url::ParseError> {
+    let mut base = url::Url::parse(href)?;
+    base.set_query(None);
+    base.set_fragment(None);
+
+    if !base.path().ends_with('/') {
+        let path = format!("{}/", base.path());
+        base.set_path(&path);
+    }
+
+    base.join("assets/quiz-schema.json")
+        .map(|schema| schema.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_url_uses_current_url_without_query_or_fragment() {
+        assert_eq!(
+            schema_url_from_href("http://127.0.0.1:44947/practice-quiz/?fresh=firefox3#top")
+                .unwrap(),
+            "http://127.0.0.1:44947/practice-quiz/assets/quiz-schema.json"
+        );
+        assert_eq!(
+            schema_url_from_href("http://127.0.0.1:44947/").unwrap(),
+            "http://127.0.0.1:44947/assets/quiz-schema.json"
+        );
+    }
+}
+
 fn copy_to_clipboard(text: String, mut copied: Signal<bool>) {
     spawn(async move {
+        copied.set(false);
         #[cfg(target_arch = "wasm32")]
         if let Some(clipboard) = web_sys::window().map(|w| w.navigator().clipboard()) {
             let _ = wasm_bindgen_futures::JsFuture::from(clipboard.write_text(&text)).await;
@@ -67,10 +98,7 @@ fn prop_type_label(prop: &serde_json::Value) -> String {
 /// Extract field rows from a properties object inside the schema.
 /// `required_names` marks fields as required regardless of the schema `required` array.
 /// Fields whose description begins with "Alias for" are skipped (they're camelCase aliases).
-fn fields_from_props(
-    props: &serde_json::Value,
-    required_names: &[&str],
-) -> Vec<FieldRow> {
+fn fields_from_props(props: &serde_json::Value, required_names: &[&str]) -> Vec<FieldRow> {
     let req: std::collections::HashSet<&str> = required_names.iter().cloned().collect();
     let Some(map) = props.as_object() else {
         return vec![];
@@ -101,7 +129,8 @@ pub fn UploadView(
     mut load_error: Signal<String>,
 ) -> Element {
     let mut show_format = use_signal(|| false);
-    let copied = use_signal(|| false);
+    let example_copied = use_signal(|| false);
+    let schema_copied = use_signal(|| false);
     let url = schema_url();
     let example_json = EXAMPLE_QUIZ_JSON.replace("SCHEMA_URL", &url);
 
@@ -110,15 +139,16 @@ pub fn UploadView(
         serde_json::from_str(SCHEMA_JSON).unwrap_or(serde_json::Value::Null);
 
     let top_fields = fields_from_props(&schema["properties"], &["questions"]);
-    let config_fields =
-        fields_from_props(&schema["definitions"]["QuizConfig"]["properties"], &[]);
+    let config_fields = fields_from_props(&schema["definitions"]["QuizConfig"]["properties"], &[]);
     // correct_answers + incorrect_answers are required via oneOf in the schema
     let question_fields = fields_from_props(
         &schema["definitions"]["QuizQuestion"]["properties"],
         &["id", "question", "correct_answers", "incorrect_answers"],
     );
-    let metadata_fields =
-        fields_from_props(&schema["definitions"]["QuestionMetadata"]["properties"], &[]);
+    let metadata_fields = fields_from_props(
+        &schema["definitions"]["QuestionMetadata"]["properties"],
+        &[],
+    );
 
     rsx! {
         div { class: "card upload-card",
@@ -178,29 +208,34 @@ pub fn UploadView(
                     div { class: "format-body",
                         div { class: "schema-url-row",
                             span { class: "schema-url-label", "JSON Schema" }
-                            a {
-                                class: "schema-url",
-                                href: "{url}",
-                                download: "quiz-schema.json",
-                                target: "_blank",
-                                "{url}"
+                            button {
+                                class: if *schema_copied.read() { "schema-url schema-url-button copied" } else { "schema-url schema-url-button" },
+                                r#type: "button",
+                                onclick: {
+                                    let text = url.clone();
+                                    move |_| copy_to_clipboard(text.clone(), schema_copied)
+                                },
+                                span { class: "schema-url-text", "{url}" }
+                                if *schema_copied.read() {
+                                    span { class: "schema-url-copied", "✓" }
+                                }
                             }
                             span { class: "schema-url-hint",
-                                "— use this URL directly as your "
+                                "— click to copy this URL for your "
                                 code { "\"$schema\"" }
-                                " value for IDE validation"
+                                " value"
                             }
                         }
 
                         div { class: "example-wrapper",
                             button {
-                                class: if *copied.read() { "copy-btn copied" } else { "copy-btn" },
+                                class: if *example_copied.read() { "copy-btn copied" } else { "copy-btn" },
                                 r#type: "button",
                                 onclick: {
                                     let text = example_json.clone();
-                                    move |_| copy_to_clipboard(text.clone(), copied)
+                                    move |_| copy_to_clipboard(text.clone(), example_copied)
                                 },
-                                if *copied.read() { "✓ Copied" } else { "Copy" }
+                                if *example_copied.read() { "✓ Copied" } else { "Copy" }
                             }
                             pre { class: "format-example", "{example_json}" }
                         }

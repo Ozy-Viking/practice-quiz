@@ -9,10 +9,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rand = { version = "0.8", features = ["small_rng"] }
 regex = "1"
+url = "2"
+dioxus-free-icons = { version = "0.10.0", features = ["lucide"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
-web-sys = { version = "0.3", features = ["Window", "Location", "Navigator", "Clipboard"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "Navigator", "Clipboard", "Storage", "MediaQueryList"] }
 wasm-bindgen-futures = "0.4"
 
 [dev-dependencies]

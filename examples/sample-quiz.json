@@ -20,7 +20,7 @@
 			"metadata": {
 				"study_location": "Week 13, slide 4",
 				"timestamp": "",
-				"topic": "",
+				"topic": "Foundational InfoSec concepts",
 				"answer": "",
 				"explanation": "",
 				"notes": "The three communities of interest are InfoSec, IT, and general business. The C.I.A. triangle is confidentiality, integrity, and availability. Confidentiality is about authorised access, while integrity is about accuracy and completeness. Availability is for authorised users, not unrestricted access. Accountability is usually supported by logging and auditing."
@@ -41,7 +41,7 @@
 			"metadata": {
 				"study_location": "Week 13, slide 5",
 				"timestamp": "",
-				"topic": "",
+				"topic": "Project management",
 				"answer": "",
 				"explanation": "",
 				"notes": "A WBS breaks project work into smaller, manageable components. The critical path is the longest-duration path that determines project duration."

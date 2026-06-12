@@ -3,8 +3,8 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    available_locations, available_topics, build_session, AppPhase, QuizFile, QuizQuestion,
-    SessionQuestion,
+    AppPhase, QuizFile, QuizQuestion, SessionQuestion, available_locations, available_topics,
+    build_session,
 };
 
 use super::FilterSection;
@@ -88,8 +88,7 @@ pub fn ConfiguringView(
             let topic_ok = match &topic_re {
                 Some(re) => q.metadata.topic.as_ref().is_some_and(|t| re.is_match(t)),
                 None => {
-                    all_topics_selected
-                        || q.metadata.topic.as_ref().is_none_or(|t| st.contains(t))
+                    all_topics_selected || q.metadata.topic.as_ref().is_none_or(|t| st.contains(t))
                 }
             };
             let loc_ok = match &location_re {
@@ -112,11 +111,19 @@ pub fn ConfiguringView(
         .collect();
 
     let topic_matched_chips: HashSet<String> = match &topic_re {
-        Some(re) => all_topics.iter().filter(|t| re.is_match(t)).cloned().collect(),
+        Some(re) => all_topics
+            .iter()
+            .filter(|t| re.is_match(t))
+            .cloned()
+            .collect(),
         None => HashSet::new(),
     };
     let location_matched_chips: HashSet<String> = match &location_re {
-        Some(re) => all_locations.iter().filter(|l| re.is_match(l)).cloned().collect(),
+        Some(re) => all_locations
+            .iter()
+            .filter(|l| re.is_match(l))
+            .cloned()
+            .collect(),
         None => HashSet::new(),
     };
 

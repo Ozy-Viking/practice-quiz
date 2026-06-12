@@ -109,13 +109,17 @@ pub struct QuestionMetadata {
 
 impl QuestionMetadata {
     pub fn has_content(&self) -> bool {
-        self.study_location.is_some()
-            || self.timestamp.is_some()
-            || self.topic.is_some()
-            || self.answer.is_some()
-            || self.explanation.is_some()
-            || self.notes.is_some()
+        has_metadata_value(&self.study_location)
+            || has_metadata_value(&self.timestamp)
+            || has_metadata_value(&self.topic)
+            || has_metadata_value(&self.answer)
+            || has_metadata_value(&self.explanation)
+            || has_metadata_value(&self.notes)
     }
+}
+
+fn has_metadata_value(value: &Option<String>) -> bool {
+    value.as_ref().is_some_and(|v| !v.trim().is_empty())
 }
 
 #[derive(Debug, Clone, PartialEq)]

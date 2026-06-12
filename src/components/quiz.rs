@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use std::collections::{HashMap, HashSet};
 
-use crate::model::{build_results, AppPhase, QuizFile, ResultsData, SessionQuestion};
+use crate::model::{AppPhase, QuizFile, ResultsData, SessionQuestion, build_results};
 
 #[component]
 pub fn QuizView(
