@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { expect, type Page, test } from '@playwright/test';
 
 const quizFixture = {
@@ -99,4 +100,85 @@ test('submits answers and shows scoring with study details', async ({ page }) =>
   await expect(page.getByText('Correct', { exact: true })).toBeVisible();
   await expect(page.getByText('Topic: Browser automation')).toBeVisible();
   await expect(page.getByText('Explanation: setInputFiles attaches files to file inputs.')).toBeVisible();
+});
+
+async function completeExportQuiz(page: Page) {
+  await uploadQuiz(page, trueFalseQuizFixture, 'true-false-quiz.json');
+  await page.getByRole('button', { name: /Start Quiz/ }).click();
+  await page.getByRole('button', { name: /True/ }).click();
+  await page.getByRole('button', { name: /Submit Answers/ }).click();
+  await expect(page.getByRole('heading', { name: 'Final Score' })).toBeVisible();
+}
+
+test('copies and downloads the same complete results JSON', async ({ page, context, browserName }) => {
+  if (browserName === 'chromium') {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  } else {
+    // Other engines do not expose Playwright clipboard permission controls.
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: async (text: string) => { (window as any).copiedResults = text; } },
+      });
+    });
+  }
+  await completeExportQuiz(page);
+  await page.getByRole('button', { name: 'Copy Results JSON' }).click();
+  await expect(page.getByRole('status')).toHaveText('Results JSON copied to clipboard.');
+  const copied = browserName === 'chromium'
+    ? await page.evaluate(() => navigator.clipboard.readText())
+    : await page.evaluate(() => (window as any).copiedResults as string);
+  const downloadEvent = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download Results JSON' }).click();
+  const download = await downloadEvent;
+  expect(download.suggestedFilename()).toBe('quiz-results.json');
+  const downloaded = await readFile((await download.path())!, 'utf8');
+  expect(downloaded).toBe(copied);
+  const result = JSON.parse(downloaded);
+  expect(result).toMatchObject({
+    format_version: 1,
+    quiz_title: trueFalseQuizFixture.title,
+    source_file: 'true-false-quiz.json',
+    question_count: 1,
+    total_score: 2,
+    total_max: 2,
+    percentage: 100,
+    questions: [{
+      id: 'tf-1',
+      status: 'correct',
+      score: 2,
+      max_score: 2,
+      selected_answers: [['A', 'True']],
+      correct_answers: [['A', 'True']],
+      missed_correct_answers: [],
+      wrong_selected_answers: [],
+      metadata: trueFalseQuizFixture.questions[0].metadata,
+    }],
+  });
+  await expect(page.getByRole('status')).toContainText('Download started.');
+});
+
+test('reports clipboard and download failures honestly and allows retry', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async () => { throw new Error('Permission denied'); } },
+    });
+    URL.createObjectURL = () => { throw new Error('Download unavailable'); };
+  });
+  await completeExportQuiz(page);
+  await page.getByRole('button', { name: 'Copy Results JSON' }).click();
+  await expect(page.getByRole('status')).toContainText('Could not copy results.');
+  await expect(page.getByRole('button', { name: 'Copy Results JSON' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Download Results JSON' }).click();
+  await expect(page.getByRole('status')).toContainText('Could not start the download.');
+  await expect(page.getByRole('button', { name: 'Download Results JSON' })).toBeEnabled();
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async () => {} },
+    });
+  });
+  await page.getByRole('button', { name: 'Copy Results JSON' }).click();
+  await expect(page.getByRole('status')).toHaveText('Results JSON copied to clipboard.');
 });

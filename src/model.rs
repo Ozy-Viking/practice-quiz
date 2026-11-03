@@ -131,7 +131,8 @@ pub struct SessionQuestion {
     pub metadata: QuestionMetadata,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum QuestionStatus {
     Correct,
     PartiallyCorrect,
@@ -139,7 +140,7 @@ pub enum QuestionStatus {
     Unanswered,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QuestionResult {
     pub id: String,
     pub text: String,
@@ -154,6 +155,43 @@ pub struct QuestionResult {
 }
 
 pub type ResultsData = (Vec<QuestionResult>, f64, f64);
+
+/// A completed attempt, independent of the quiz input file format.
+#[derive(Serialize)]
+struct ResultsExport<'a> {
+    format_version: u32,
+    quiz_title: String,
+    source_file: &'a str,
+    config: QuizConfig,
+    question_count: usize,
+    total_score: f64,
+    total_max: f64,
+    percentage: f64,
+    questions: &'a [QuestionResult],
+}
+
+pub fn results_json(
+    quiz: &QuizFile,
+    source_file: &str,
+    results: &ResultsData,
+) -> Result<String, serde_json::Error> {
+    let (questions, total_score, total_max) = results;
+    serde_json::to_string_pretty(&ResultsExport {
+        format_version: 1,
+        quiz_title: quiz.display_title(),
+        source_file,
+        config: quiz.effective_config(),
+        question_count: questions.len(),
+        total_score: *total_score,
+        total_max: *total_max,
+        percentage: if *total_max > 0.0 {
+            total_score / total_max * 100.0
+        } else {
+            0.0
+        },
+        questions,
+    })
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppPhase {
@@ -458,6 +496,77 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn exports_completed_attempt_with_answers_metadata_and_source() {
+        let mut quiz = sample_quiz();
+        quiz.title = "Quiz \"quoted\"\n日本語 </script>".into();
+        let mut rng = SmallRng::from_seed([2; 32]);
+        let session = build_session(&quiz.questions, 3, &mut rng);
+        let selections = session
+            .iter()
+            .map(|q| (q.id.clone(), [q.options[0].0.clone()].into_iter().collect()))
+            .collect();
+        let results = build_results(&session, &selections, &quiz.effective_config());
+        let text = results_json(&quiz, "input\\quiz.json", &results).unwrap();
+        let exported: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(text.contains("\n  \"format_version\""));
+        assert_eq!(exported["quiz_title"], quiz.title);
+        assert_eq!(exported["source_file"], "input\\quiz.json");
+        assert_eq!(exported["question_count"], 3);
+        assert_eq!(exported["total_score"], results.1);
+        assert_eq!(exported["total_max"], results.2);
+        assert_eq!(exported["percentage"], results.1 / results.2 * 100.0);
+        assert_eq!(exported["config"]["marks_per_question"], 2.0);
+        for (json, result) in exported["questions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(&results.0)
+        {
+            assert_eq!(json["id"], result.id);
+            assert_eq!(
+                json["selected_answers"],
+                serde_json::to_value(&result.selected_answers).unwrap()
+            );
+            assert_eq!(
+                json["correct_answers"],
+                serde_json::to_value(&result.correct_answers).unwrap()
+            );
+            assert_eq!(
+                json["missed_correct_answers"],
+                serde_json::to_value(&result.missed_correct_answers).unwrap()
+            );
+            assert_eq!(
+                json["wrong_selected_answers"],
+                serde_json::to_value(&result.wrong_selected_answers).unwrap()
+            );
+            assert_eq!(
+                json["metadata"],
+                serde_json::to_value(&result.metadata).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn export_handles_unanswered_and_empty_results() {
+        let quiz = sample_quiz();
+        let mut rng = SmallRng::from_seed([0; 32]);
+        let session = build_session(&quiz.questions, 1, &mut rng);
+        let results = build_results(&session, &Default::default(), &quiz.effective_config());
+        let exported: serde_json::Value =
+            serde_json::from_str(&results_json(&quiz, "quiz.json", &results).unwrap()).unwrap();
+        assert_eq!(exported["questions"][0]["status"], "unanswered");
+        assert_eq!(
+            exported["questions"][0]["selected_answers"],
+            serde_json::json!([])
+        );
+        assert_eq!(exported["percentage"], 0.0);
+        let empty: serde_json::Value =
+            serde_json::from_str(&results_json(&quiz, "", &(vec![], 0.0, 0.0)).unwrap()).unwrap();
+        assert_eq!(empty["percentage"], 0.0);
+        assert_eq!(empty["questions"], serde_json::json!([]));
     }
 
     #[test]

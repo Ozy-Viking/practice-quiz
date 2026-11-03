@@ -2,11 +2,78 @@ use dioxus::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    AppPhase, QuestionStatus, QuizFile, QuizQuestion, ResultsData, SessionQuestion,
+    AppPhase, QuestionStatus, QuizFile, QuizQuestion, ResultsData, SessionQuestion, results_json,
 };
 
 fn metadata_value(value: &Option<String>) -> Option<&str> {
     value.as_deref().filter(|v| !v.trim().is_empty())
+}
+
+// Quiz text is sent as data, never interpolated into executable JavaScript.
+const EXPORT_SCRIPT: &str = r#"
+    const [action, text] = await dioxus.recv();
+    try {
+        if (action === "copy") {
+            await navigator.clipboard.writeText(text);
+        } else {
+            const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            try {
+                link.href = url;
+                link.download = "quiz-results.json";
+                document.body.appendChild(link);
+                link.click();
+            } finally {
+                link.remove();
+                // Give the browser time to consume the URL before releasing it.
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }
+        }
+        return true;
+    } catch (_) {
+        return false;
+    }
+"#;
+
+fn export_results(
+    action: &'static str,
+    quiz: Signal<Option<QuizFile>>,
+    file_name: Signal<String>,
+    results: Signal<Option<ResultsData>>,
+    mut busy: Signal<bool>,
+    mut feedback: Signal<String>,
+    mut failed: Signal<bool>,
+) {
+    feedback.set(String::new());
+    failed.set(false);
+    let json = match (quiz.read().as_ref(), results.read().as_ref()) {
+        (Some(quiz), Some(results)) => results_json(quiz, &file_name.read(), results),
+        _ => {
+            failed.set(true);
+            feedback.set("No completed results to export.".into());
+            return;
+        }
+    };
+    let Ok(json) = json else {
+        failed.set(true);
+        feedback.set("Could not prepare results JSON. Please try again.".into());
+        return;
+    };
+    busy.set(true);
+    spawn(async move {
+        let eval = document::eval(EXPORT_SCRIPT);
+        let success =
+            eval.send((action, json)).is_ok() && matches!(eval.join::<bool>().await, Ok(true));
+        busy.set(false);
+        failed.set(!success);
+        feedback.set(match (action, success) {
+            ("copy", true) => "Results JSON copied to clipboard.",
+            ("copy", false) => "Could not copy results. Check clipboard permissions or download the JSON instead.",
+            (_, true) => "Download started. Check your browser's downloads for quiz-results.json.",
+            (_, false) => "Could not start the download. Please try again or copy the JSON instead.",
+        }.into());
+    });
 }
 
 #[component]
@@ -21,6 +88,9 @@ pub fn ResultsView(
     mut load_error: Signal<String>,
     question_pool: Signal<Vec<QuizQuestion>>,
 ) -> Element {
+    let busy = use_signal(|| false);
+    let feedback = use_signal(String::new);
+    let failed = use_signal(|| false);
     let (res_list, total_score, total_max) =
         results
             .read()
@@ -52,6 +122,31 @@ pub fn ResultsView(
                 h2 { "Final Score" }
                 div { class: "score-number", "{total_score:.1} / {total_max:.0}" }
                 div { class: "score-percent", "{pct}%" }
+            }
+            div { class: "results-export",
+                div { class: "button-row",
+                    button {
+                        class: "btn btn-secondary",
+                        r#type: "button",
+                        disabled: busy(),
+                        onclick: move |_| export_results("copy", quiz, file_name, results, busy, feedback, failed),
+                        "Copy Results JSON"
+                    }
+                    button {
+                        class: "btn btn-secondary",
+                        r#type: "button",
+                        disabled: busy(),
+                        onclick: move |_| export_results("download", quiz, file_name, results, busy, feedback, failed),
+                        "Download Results JSON"
+                    }
+                }
+                if !feedback.read().is_empty() {
+                    p {
+                        class: if failed() { "error-banner" } else { "hint" },
+                        role: "status",
+                        "{feedback}"
+                    }
+                }
             }
             if !study_items.is_empty() {
                 div { class: "study-summary",
