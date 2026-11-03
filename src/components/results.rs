@@ -9,32 +9,87 @@ fn metadata_value(value: &Option<String>) -> Option<&str> {
     value.as_deref().filter(|v| !v.trim().is_empty())
 }
 
-// Quiz text is sent as data, never interpolated into executable JavaScript.
-const EXPORT_SCRIPT: &str = r#"
-    const [action, text] = await dioxus.recv();
-    try {
-        if (action === "copy") {
-            await navigator.clipboard.writeText(text);
-        } else {
-            const blob = new Blob([text], { type: "application/json;charset=utf-8" });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            try {
-                link.href = url;
-                link.download = "quiz-results.json";
-                document.body.appendChild(link);
-                link.click();
-            } finally {
-                link.remove();
-                // Give the browser time to consume the URL before releasing it.
-                setTimeout(() => URL.revokeObjectURL(url), 1000);
-            }
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::{JsCast, JsValue, closure::Closure};
+
+#[cfg(target_arch = "wasm32")]
+struct DownloadLink {
+    anchor: web_sys::HtmlAnchorElement,
+    url: String,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for DownloadLink {
+    fn drop(&mut self) {
+        self.anchor.remove();
+        // Keep the URL alive until the browser has consumed the download click.
+        // This cleanup also runs when appending the anchor fails.
+        let url = self.url.clone();
+        let revoke = Closure::once_into_js(move || {
+            let _ = web_sys::Url::revoke_object_url(&url);
+        });
+        let scheduled = web_sys::window().is_some_and(|window| {
+            window
+                .set_timeout_with_callback_and_timeout_and_arguments_0(revoke.unchecked_ref(), 1000)
+                .is_ok()
+        });
+        if !scheduled {
+            // Invoke it ourselves so the one-shot closure is also released.
+            let _ = revoke
+                .unchecked_ref::<js_sys::Function>()
+                .call0(&JsValue::NULL);
         }
-        return true;
-    } catch (_) {
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn download_results(text: &str) -> Result<(), JsValue> {
+    let document = web_sys::window()
+        .and_then(|window| window.document())
+        .ok_or_else(|| JsValue::from_str("Browser document unavailable"))?;
+    let body = document
+        .body()
+        .ok_or_else(|| JsValue::from_str("Browser document body unavailable"))?;
+    let anchor = document
+        .create_element("a")?
+        .dyn_into::<web_sys::HtmlAnchorElement>()?;
+    let options = web_sys::BlobPropertyBag::new();
+    options.set_type("application/json;charset=utf-8");
+    let parts = js_sys::Array::of1(&JsValue::from_str(text));
+    let blob = web_sys::Blob::new_with_str_sequence_and_options(&parts, &options)?;
+    let download = DownloadLink {
+        anchor,
+        url: web_sys::Url::create_object_url_with_blob(&blob)?,
+    };
+    download.anchor.set_href(&download.url);
+    download.anchor.set_download("quiz-results.json");
+    body.append_child(&download.anchor)?;
+    download.anchor.click();
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn browser_export(action: &str, text: &str) -> bool {
+    if action != "copy" {
+        return download_results(text).is_ok();
+    }
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+    let clipboard = window.navigator().clipboard();
+    // The generated getter returns a Clipboard even when the browser property is absent.
+    if clipboard.is_undefined() || clipboard.is_null() {
         return false;
     }
-"#;
+    wasm_bindgen_futures::JsFuture::from(clipboard.write_text(text))
+        .await
+        .is_ok()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn browser_export(_action: &str, _text: &str) -> bool {
+    false
+}
 
 fn export_results(
     action: &'static str,
@@ -62,9 +117,7 @@ fn export_results(
     };
     busy.set(true);
     spawn(async move {
-        let eval = document::eval(EXPORT_SCRIPT);
-        let success =
-            eval.send((action, json)).is_ok() && matches!(eval.join::<bool>().await, Ok(true));
+        let success = browser_export(action, &json).await;
         busy.set(false);
         failed.set(!success);
         feedback.set(match (action, success) {

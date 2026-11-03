@@ -1973,11 +1973,13 @@ dependencies = [
  "dioxus",
  "dioxus-free-icons",
  "getrandom 0.2.17",
+ "js-sys",
  "rand 0.8.6",
  "regex",
  "serde",
  "serde_json",
  "url",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
 ]
