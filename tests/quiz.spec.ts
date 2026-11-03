@@ -435,3 +435,26 @@ test('copies only the seed in quiz and results and reports clipboard failures', 
   await expect(page.locator('.score-banner').getByRole('checkbox')).toHaveCount(0);
   await expect(page.locator('.rerun-actions').getByRole('checkbox')).toBeChecked();
 });
+
+
+for (const missingClipboard of ['undefined', 'null'] as const) {
+  test(`seed copy reports unavailable clipboard (${missingClipboard}) on quiz and results`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.addInitScript(value => {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: value === 'null' ? null : undefined,
+      });
+    }, missingClipboard);
+    await uploadQuiz(page, seededQuiz);
+    await page.getByLabel('Seed:', { exact: true }).fill('42');
+    await page.getByRole('button', { name: /Start Quiz/ }).click();
+    await page.getByRole('button', { name: 'Copy seed 42', exact: true }).click();
+    await expect(page.locator('.seed-copy-status')).toContainText("Couldn't copy seed");
+    await page.getByRole('button', { name: /Submit Answers/ }).click();
+    await page.getByRole('button', { name: 'Copy seed 42', exact: true }).click();
+    await expect(page.locator('.seed-copy-status')).toContainText("Couldn't copy seed");
+    expect(errors).toEqual([]);
+  });
+}

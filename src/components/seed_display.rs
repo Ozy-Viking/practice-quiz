@@ -14,9 +14,15 @@ pub fn SeedDisplay(seed: u32) -> Element {
                     copy_status.set(String::new());
                     #[cfg(target_arch = "wasm32")]
                     let copied = if let Some(window) = web_sys::window() {
-                        wasm_bindgen_futures::JsFuture::from(
-                            window.navigator().clipboard().write_text(&seed.to_string())
-                        ).await.is_ok()
+                        let clipboard = window.navigator().clipboard();
+                        // The generated getter can return an absent browser property.
+                        if clipboard.is_undefined() || clipboard.is_null() {
+                            false
+                        } else {
+                            wasm_bindgen_futures::JsFuture::from(
+                                clipboard.write_text(&seed.to_string())
+                            ).await.is_ok()
+                        }
                     } else {
                         false
                     };
