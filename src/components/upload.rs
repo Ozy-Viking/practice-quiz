@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
-use crate::model::{AppPhase, EXAMPLE_QUIZ_JSON, QuizFile, initial_question_count, validate_quiz};
+use crate::model::*;
+use std::collections::{HashMap, HashSet};
 
 const SCHEMA_JSON: &str = include_str!("../../assets/quiz-schema.json");
 
@@ -127,6 +128,16 @@ pub fn UploadView(
     mut question_count: Signal<usize>,
     mut file_name: Signal<String>,
     mut load_error: Signal<String>,
+    mut session: Signal<Vec<SessionQuestion>>,
+    mut selections: Signal<HashMap<String, HashSet<String>>>,
+    mut results: Signal<Option<ResultsData>>,
+    mut question_pool: Signal<Vec<QuizQuestion>>,
+    mut selected_topics: Signal<HashSet<String>>,
+    mut selected_locations: Signal<HashSet<String>>,
+    mut topic_regex_input: Signal<String>,
+    mut location_regex_input: Signal<String>,
+    mut seed_input: Signal<String>,
+    mut active_seed: Signal<u32>,
 ) -> Element {
     let mut show_format = use_signal(|| false);
     let example_copied = use_signal(|| false);
@@ -177,6 +188,16 @@ pub fn UploadView(
                             Ok(q) => {
                                 match validate_quiz(&q) {
                                     Ok(()) => {
+                                        session.set(Vec::new());
+                                        selections.set(HashMap::new());
+                                        results.set(None);
+                                        question_pool.set(Vec::new());
+                                        selected_topics.set(available_topics(&q).into_iter().collect());
+                                        selected_locations.set(available_locations(&q).into_iter().collect());
+                                        topic_regex_input.set(String::new());
+                                        location_regex_input.set(String::new());
+                                        seed_input.set(rand::random::<u32>().to_string());
+                                        active_seed.set(0);
                                         question_count.set(initial_question_count(&q));
                                         file_name.set(name);
                                         quiz.set(Some(q));

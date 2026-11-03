@@ -124,7 +124,7 @@ test('copies and downloads the same complete results JSON', async ({ page, conte
   }
   await completeExportQuiz(page);
   await page.getByRole('button', { name: 'Copy Results JSON' }).click();
-  await expect(page.getByRole('status')).toHaveText('Results JSON copied to clipboard.');
+  await expect(page.locator('.results-export').getByRole('status')).toHaveText('Results JSON copied to clipboard.');
   const copied = browserName === 'chromium'
     ? await page.evaluate(() => navigator.clipboard.readText())
     : await page.evaluate(() => (window as any).copiedResults as string);
@@ -163,7 +163,7 @@ test('copies and downloads the same complete results JSON', async ({ page, conte
       metadata: trueFalseQuizFixture.questions[0].metadata,
     }],
   });
-  await expect(page.getByRole('status')).toContainText('Download started.');
+  await expect(page.locator('.results-export').getByRole('status')).toContainText('Download started.');
   await expect(page.locator('a[download="quiz-results.json"]')).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => (window as any).revokedExportUrls.length)).toBe(1);
 });
@@ -178,10 +178,10 @@ test('reports clipboard and download failures honestly and allows retry', async 
   });
   await completeExportQuiz(page);
   await page.getByRole('button', { name: 'Copy Results JSON' }).click();
-  await expect(page.getByRole('status')).toContainText('Could not copy results.');
+  await expect(page.locator('.results-export').getByRole('status')).toContainText('Could not copy results.');
   await expect(page.getByRole('button', { name: 'Copy Results JSON' })).toBeEnabled();
   await page.getByRole('button', { name: 'Download Results JSON' }).click();
-  await expect(page.getByRole('status')).toContainText('Could not start the download.');
+  await expect(page.locator('.results-export').getByRole('status')).toContainText('Could not start the download.');
   await expect(page.getByRole('button', { name: 'Download Results JSON' })).toBeEnabled();
   await page.evaluate(() => {
     Object.defineProperty(navigator, 'clipboard', {
@@ -190,7 +190,7 @@ test('reports clipboard and download failures honestly and allows retry', async 
     });
   });
   await page.getByRole('button', { name: 'Copy Results JSON' }).click();
-  await expect(page.getByRole('status')).toHaveText('Results JSON copied to clipboard.');
+  await expect(page.locator('.results-export').getByRole('status')).toHaveText('Results JSON copied to clipboard.');
 });
 
 test('handles missing clipboard and cleans up failed download resources', async ({ page }) => {
@@ -218,11 +218,220 @@ test('handles missing clipboard and cleans up failed download resources', async 
     }) as typeof document.body.appendChild;
   });
   await page.getByRole('button', { name: 'Copy Results JSON' }).click();
-  await expect(page.getByRole('status')).toContainText('Could not copy results.');
+  await expect(page.locator('.results-export').getByRole('status')).toContainText('Could not copy results.');
   await page.getByRole('button', { name: 'Download Results JSON' }).click();
-  await expect(page.getByRole('status')).toContainText('Could not start the download.');
+  await expect(page.locator('.results-export').getByRole('status')).toContainText('Could not start the download.');
   await expect(page.locator('a[download="quiz-results.json"]')).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => (window as any).exportUrls.revoked.length)).toBe(1);
   expect(await page.evaluate(() => (window as any).exportUrls.created))
     .toEqual(await page.evaluate(() => (window as any).exportUrls.revoked));
+});
+
+const seededQuiz = require('./fixtures/seeded-quiz.json');
+const seededOrder = require('./fixtures/seeded-order.json');
+
+async function attachQuiz(page: Page, quiz: unknown) {
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'seeded.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(quiz)),
+  });
+  await expect(page.locator('#quiz-seed')).toBeVisible();
+}
+
+async function quizContent(page: Page) {
+  return page.locator('.question-block').evaluateAll(blocks => blocks.map(block => ({
+    text: block.querySelector('.question-text')!.textContent,
+    options: Array.from(block.querySelectorAll('.option-text'), option => option.textContent),
+  })));
+}
+
+const expectedContent = seededOrder.map(({ text, options }: { text: string; options: string[] }) => ({ text, options }));
+
+test('seeded browser ordering matches native fixture and survives reupload', async ({ page }) => {
+  await uploadQuiz(page, seededQuiz);
+  await page.getByLabel('Seed:', { exact: true }).fill(' 00042 ');
+  await page.getByRole('button', { name: /Start Quiz/ }).click();
+  await expect(page.locator('#quiz-heading')).toBeFocused();
+  expect(await quizContent(page)).toEqual(expectedContent);
+  await expect(page.locator('.session-seed')).toHaveText('Seed: 42');
+
+  for (const question of seededQuiz.questions) {
+    const block = page.locator('.question-block').filter({ has: page.getByText(question.question, { exact: true }) });
+    for (const answer of question.correct_answers) {
+      await block.locator('.option-btn').filter({ has: page.getByText(answer, { exact: true }) }).click();
+    }
+  }
+  await page.getByRole('button', { name: /Submit Answers/ }).click();
+  await expect(page.locator('.score-number')).toHaveText('4.0 / 4');
+  await expect(page.locator('.session-seed')).toHaveText('Seed: 42');
+  await page.getByRole('button', { name: /Load New Quiz/ }).click();
+  await attachQuiz(page, seededQuiz);
+  await page.getByLabel('Seed:', { exact: true }).fill('42');
+  await page.getByRole('button', { name: /Start Quiz/ }).click();
+  expect(await quizContent(page)).toEqual(expectedContent);
+});
+
+test('reruns the exact session twice with cleared answers, focus and scroll', async ({ page }) => {
+  await uploadQuiz(page, seededQuiz);
+  await page.getByLabel('Seed:', { exact: true }).fill('42');
+  await page.getByRole('button', { name: /Start Quiz/ }).click();
+  for (let run = 0; run < 2; run++) {
+    await page.locator('.option-btn').first().click();
+    await expect(page.getByText('1/4 answered')).toBeVisible();
+    await page.getByRole('button', { name: /Submit Answers/ }).click();
+    await expect(page.locator('.score-number')).toBeVisible();
+    await page.getByRole('button', { name: 'Rerun same questions' }).click();
+    await expect(page.locator('.results-card')).toHaveCount(0);
+    await expect(page.getByText('0/4 answered')).toBeVisible();
+    await expect(page.locator('.option-btn.selected')).toHaveCount(0);
+    await expect(page.locator('.session-seed')).toHaveText('Seed: 42');
+    await expect(page.locator('#quiz-heading')).toBeFocused();
+    await expect(page.locator('#quiz-heading')).toBeInViewport();
+    expect(await quizContent(page)).toEqual(expectedContent);
+  }
+  await page.getByRole('button', { name: /Submit Answers/ }).click();
+  await expect(page.locator('.score-number')).toHaveText('0.0 / 4');
+  await expect(page.locator('.result-badge')).toHaveText(['Unanswered', 'Unanswered', 'Unanswered', 'Unanswered']);
+});
+
+test('restores manual filters, regex inputs, count and normalized seed through settings', async ({ page }) => {
+  await uploadQuiz(page, seededQuiz);
+  await page.getByLabel('Week 2', { exact: true }).uncheck();
+  await expect(page.getByLabel('Numbers', { exact: true })).toBeChecked();
+  await page.getByLabel('Logic', { exact: true }).uncheck();
+  await page.getByPlaceholder('regex (e.g. Week [1-3])').fill('Week 1');
+  await page.getByPlaceholder('regex (e.g. Chapter [1-3])').fill('Numbers|Logic');
+  await page.getByLabel('Questions to attempt:').fill('2');
+  await page.getByLabel('Seed:', { exact: true }).fill('00042');
+  await page.getByRole('button', { name: /Start Quiz/ }).click();
+  const first = await quizContent(page);
+  for (let visit = 0; visit < 2; visit++) {
+    if (visit === 1) await page.getByRole('button', { name: /Submit Answers/ }).click();
+    await page.getByRole('button', { name: /Back to Settings/ }).click();
+    await expect(page.getByLabel('Questions to attempt:')).toHaveValue('2');
+    await expect(page.getByLabel('Seed:', { exact: true })).toHaveValue('42');
+    await expect(page.getByPlaceholder('regex (e.g. Week [1-3])')).toHaveValue('Week 1');
+    await expect(page.getByPlaceholder('regex (e.g. Chapter [1-3])')).toHaveValue('Numbers|Logic');
+    await expect(page.getByLabel('Week 2', { exact: true })).not.toBeChecked();
+    await expect(page.getByLabel('Logic', { exact: true })).not.toBeChecked();
+    await page.getByRole('button', { name: /Start Quiz/ }).click();
+    expect(await quizContent(page)).toEqual(first);
+  }
+});
+
+test('validates decimal seed, recovers with New seed, and blocks an empty pool', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await uploadQuiz(page, seededQuiz);
+  const seed = page.getByLabel('Seed:', { exact: true });
+  const start = page.getByRole('button', { name: /Start Quiz/ });
+  await expect(seed).toHaveValue(/^\d+$/);
+  for (const value of ['', ' ', '-1', '+1', '1.5', '1e3', '0x10', '１２', '4294967296']) {
+    await seed.fill(value);
+    await expect(seed).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByRole('alert')).toContainText('Enter a whole number');
+    await expect(start).toBeDisabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  }
+  for (const value of ['0', '4294967295', ' 00042 ']) {
+    await seed.fill(value);
+    await expect(seed).toHaveAttribute('aria-invalid', 'false');
+    await expect(start).toBeEnabled();
+  }
+  await seed.fill('invalid');
+  await page.getByRole('button', { name: 'New seed', exact: true }).click();
+  await expect(seed).toHaveValue(/^\d+$/);
+  await expect(start).toBeEnabled();
+  await page.getByPlaceholder('regex (e.g. Chapter [1-3])').fill('no such topic');
+  await expect(page.getByText('No questions match the current filters.')).toBeVisible();
+  await expect(start).toBeDisabled();
+  await page.getByPlaceholder('regex (e.g. Chapter [1-3])').fill('');
+  await expect(start).toBeEnabled();
+  await start.click();
+  await expect(page.getByText('0/4 answered')).toBeVisible();
+});
+
+test('successful new file resets filters, settings, session and results', async ({ page }) => {
+  await uploadQuiz(page, seededQuiz);
+  await page.getByPlaceholder('regex (e.g. Chapter [1-3])').fill('Numbers');
+  await page.getByPlaceholder('regex (e.g. Week [1-3])').fill('Week 1');
+  await page.getByLabel('Seed:', { exact: true }).fill('42');
+  await page.getByRole('button', { name: /Start Quiz/ }).click();
+  await page.locator('.option-btn').first().click();
+  await page.getByRole('button', { name: /Submit Answers/ }).click();
+  await page.getByRole('button', { name: /Load New Quiz/ }).click();
+  await attachQuiz(page, quizFixture);
+  await expect(page.getByLabel('Questions to attempt:')).toHaveValue('1');
+  await expect(page.getByPlaceholder('regex (e.g. Chapter [1-3])')).toHaveValue('');
+  await expect(page.getByPlaceholder('regex (e.g. Week [1-3])')).toHaveValue('');
+  for (const checkbox of await page.getByRole('checkbox').all()) await expect(checkbox).toBeChecked();
+  await expect(page.getByLabel('Seed:', { exact: true })).toHaveValue(/^\d+$/);
+  await expect(page.locator('.results-card')).toHaveCount(0);
+  await page.getByRole('button', { name: /Start Quiz/ }).click();
+  await expect(page.getByText('0/1 answered')).toBeVisible();
+  await expect(page.locator('.question-block')).toHaveCount(1);
+  await expect(page.locator('.option-btn.selected')).toHaveCount(0);
+});
+
+
+test('rerun can shuffle questions and answers while preserving scoring', async ({ page }) => {
+  await uploadQuiz(page, seededQuiz);
+  await expect(page.getByText('Use the same seed, file and settings to repeat question and answer order.')).toHaveCount(0);
+  await page.getByLabel('Seed:', { exact: true }).fill('42');
+  await page.getByRole('button', { name: /Start Quiz/ }).click();
+  const original = await quizContent(page);
+  await page.locator('.option-btn').first().click();
+  await page.getByRole('button', { name: /Submit Answers/ }).click();
+  await expect(page.getByLabel('Keep question and answer order')).toBeChecked();
+  await page.getByLabel('Keep question and answer order').uncheck();
+  await page.getByRole('button', { name: 'Rerun same questions' }).click();
+  await expect(page.getByText('0/4 answered')).toBeVisible();
+  await expect(page.locator('.option-btn.selected')).toHaveCount(0);
+  const shuffled = await quizContent(page);
+  expect(shuffled).not.toEqual(original);
+  expect(shuffled).toHaveLength(original.length);
+  expect(shuffled.map(q => q.text)).not.toEqual(original.map(q => q.text));
+  for (const question of shuffled) {
+    const before = original.find(q => q.text === question.text)!;
+    expect([...question.options].sort()).toEqual([...before.options].sort());
+    if (question.options.includes('True') && question.options.includes('False')) {
+      expect(question.options).toEqual(['True', 'False']);
+    } else {
+      expect(question.options).not.toEqual(before.options);
+    }
+  }
+  for (const question of seededQuiz.questions) {
+    const block = page.locator('.question-block').filter({ has: page.getByText(question.question, { exact: true }) });
+    for (const answer of question.correct_answers) {
+      await block.locator('.option-btn').filter({ has: page.getByText(answer, { exact: true }) }).click();
+    }
+  }
+  await page.getByRole('button', { name: /Submit Answers/ }).click();
+  await expect(page.locator('.score-number')).toHaveText('4.0 / 4');
+  await page.getByRole('button', { name: 'Rerun same questions' }).click();
+  expect(await quizContent(page)).toEqual(shuffled);
+});
+
+test('copies only the seed in quiz and results and reports clipboard failures', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async (text: string) => {
+        if ((window as any).rejectCopy) throw new Error('Permission denied');
+        (window as any).copiedSeed = text;
+      },
+    } });
+  });
+  await uploadQuiz(page, seededQuiz);
+  await page.getByLabel('Seed:', { exact: true }).fill('42');
+  await page.getByRole('button', { name: /Start Quiz/ }).click();
+  await page.getByRole('button', { name: 'Copy seed 42', exact: true }).click();
+  await expect(page.locator('.seed-copy-status')).toHaveText('Seed copied');
+  expect(await page.evaluate(() => (window as any).copiedSeed)).toBe('42');
+  await page.getByRole('button', { name: /Submit Answers/ }).click();
+  await page.getByRole('button', { name: 'Copy seed 42', exact: true }).click();
+  await expect(page.locator('.seed-copy-status')).toHaveText('Seed copied');
+  await page.evaluate(() => { (window as any).rejectCopy = true; });
+  await page.getByRole('button', { name: 'Copy seed 42', exact: true }).click();
+  await expect(page.locator('.seed-copy-status')).toContainText("Couldn't copy seed");
+  await expect(page.locator('.score-banner').getByRole('checkbox')).toHaveCount(0);
+  await expect(page.locator('.rerun-actions').getByRole('checkbox')).toBeChecked();
 });

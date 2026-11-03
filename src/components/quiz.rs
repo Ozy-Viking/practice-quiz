@@ -10,6 +10,7 @@ pub fn QuizView(
     session: Signal<Vec<SessionQuestion>>,
     mut selections: Signal<HashMap<String, HashSet<String>>>,
     mut results: Signal<Option<ResultsData>>,
+    active_seed: Signal<u32>,
 ) -> Element {
     let sess = session.read();
     let config = quiz
@@ -31,9 +32,18 @@ pub fn QuizView(
     rsx! {
         div { class: "card quiz-card",
             div { class: "quiz-header",
-                h2 { "{quiz_title}" }
+                h2 {
+                    id: "quiz-heading",
+                    tabindex: "-1",
+                    onmounted: move |evt| async move {
+                        let _ = evt.set_focus(true).await;
+                        let _ = evt.scroll_to(ScrollBehavior::Instant).await;
+                    },
+                    "{quiz_title}"
+                }
                 span { class: "question-counter", "{answered_count}/{sess.len()} answered" }
             }
+            super::SeedDisplay { seed: *active_seed.read() }
             for (idx, sq) in sess.iter().enumerate() {
                 {
                     let qid = sq.id.clone();
@@ -84,7 +94,7 @@ pub fn QuizView(
                         session.set(Vec::new());
                         selections.set(HashMap::new());
                     },
-                    "← Restart"
+                    "← Back to Settings"
                 }
                 button {
                     class: "btn btn-submit",

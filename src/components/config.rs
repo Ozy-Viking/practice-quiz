@@ -3,8 +3,8 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    AppPhase, QuizFile, QuizQuestion, SessionQuestion, available_locations, available_topics,
-    build_session,
+    AppPhase, QuizFile, QuizQuestion, ResultsData, SessionQuestion, available_locations,
+    available_topics, build_seeded_session, parse_seed,
 };
 
 use super::FilterSection;
@@ -19,6 +19,13 @@ pub fn ConfiguringView(
     file_name: Signal<String>,
     load_error: Signal<String>,
     mut question_pool: Signal<Vec<QuizQuestion>>,
+    mut selected_topics: Signal<HashSet<String>>,
+    selected_locations: Signal<HashSet<String>>,
+    topic_regex_input: Signal<String>,
+    location_regex_input: Signal<String>,
+    mut seed_input: Signal<String>,
+    mut active_seed: Signal<u32>,
+    mut results: Signal<Option<ResultsData>>,
 ) -> Element {
     let q = quiz.read().as_ref().unwrap().clone();
     let config = q.effective_config();
@@ -29,12 +36,8 @@ pub fn ConfiguringView(
     let all_topics = available_topics(&q);
     let all_locations = available_locations(&q);
 
-    let init_topics: HashSet<String> = all_topics.iter().cloned().collect();
-    let init_locs: HashSet<String> = all_locations.iter().cloned().collect();
-    let mut selected_topics: Signal<HashSet<String>> = use_signal(move || init_topics);
-    let selected_locations: Signal<HashSet<String>> = use_signal(move || init_locs);
-    let topic_regex_input: Signal<String> = use_signal(String::new);
-    let location_regex_input: Signal<String> = use_signal(String::new);
+    // Keep the initial location selection so remounting preserves restored topic choices.
+    let mut previous_locations = use_signal(|| selected_locations.peek().clone());
 
     // One-way sync: when location selection changes, update topic selection to only the topics
     // that exist in those locations. This effect subscribes to selected_locations only — it never
@@ -45,6 +48,10 @@ pub fn ConfiguringView(
         let all_topics2 = all_topics.clone();
         use_effect(move || {
             let sl = selected_locations.read().clone();
+            if sl == *previous_locations.peek() {
+                return;
+            }
+            previous_locations.set(sl.clone());
             let new_selection: HashSet<String> = if sl.is_empty() || sl.len() == all_locs2.len() {
                 all_topics2.iter().cloned().collect()
             } else {
@@ -133,7 +140,8 @@ pub fn ConfiguringView(
     } else {
         (*question_count.read()).clamp(1, filtered_max)
     };
-    let can_start = filtered_max > 0;
+    let seed_result = parse_seed(&seed_input.read());
+    let can_start = filtered_max > 0 && seed_result.is_ok();
 
     rsx! {
         div { class: "card config-card",
@@ -174,27 +182,51 @@ pub fn ConfiguringView(
                 }
             }
 
-            if !can_start {
+            if filtered_max == 0 {
                 div { class: "filter-empty-warning", "No questions match the current filters." }
             }
 
-            div { class: "config-row",
-                label { "Questions to attempt:" }
-                input {
-                    r#type: "number",
-                    min: "1",
-                    max: "{filtered_max}",
-                    value: "{effective_count}",
-                    disabled: !can_start,
-                    onchange: {
-                        let fm = filtered_max;
-                        move |evt: FormEvent| {
-                            let v: usize = evt.value().parse().unwrap_or(fm);
-                            question_count.set(v.clamp(1, fm.max(1)));
-                        }
-                    },
+            div { class: "settings-fields",
+                div { class: "config-row",
+                    label { r#for: "question-count", "Questions to attempt:" }
+                    input {
+                        id: "question-count",
+                        r#type: "number",
+                        min: "1",
+                        max: "{filtered_max}",
+                        value: "{effective_count}",
+                        disabled: filtered_max == 0,
+                        onchange: {
+                            let fm = filtered_max;
+                            move |evt: FormEvent| {
+                                let v: usize = evt.value().parse().unwrap_or(fm);
+                                question_count.set(v.clamp(1, fm.max(1)));
+                            }
+                        },
+                    }
+                    span { class: "range-hint", "of {filtered_max}" }
                 }
-                span { class: "range-hint", "of {filtered_max}" }
+                div { class: "config-row seed-row",
+                    label { r#for: "quiz-seed", "Seed:" }
+                    input {
+                        id: "quiz-seed",
+                        r#type: "text",
+                        inputmode: "numeric",
+                        value: "{seed_input.read()}",
+                        aria_invalid: "{seed_result.is_err()}",
+                        aria_describedby: "seed-error",
+                        oninput: move |evt| seed_input.set(evt.value()),
+                    }
+                    button {
+                        class: "btn btn-secondary",
+                        r#type: "button",
+                        onclick: move |_| seed_input.set(rand::random::<u32>().to_string()),
+                        "New seed"
+                    }
+                }
+            }
+            div { id: "seed-error", role: "alert", class: "filter-regex-error",
+                if let Err(error) = seed_result { "{error}" }
             }
             div { class: "button-row",
                 button {
@@ -214,9 +246,13 @@ pub fn ConfiguringView(
                     onclick: {
                         let fq = filtered_questions.clone();
                         move |_| {
+                            let Ok(seed) = parse_seed(&seed_input.read()) else { return; };
+                            if fq.is_empty() { return; }
                             let count = effective_count;
-                            let mut rng = rand::thread_rng();
-                            let sess = build_session(&fq, count, &mut rng);
+                            let sess = build_seeded_session(&fq, count, seed);
+                            seed_input.set(seed.to_string());
+                            active_seed.set(seed);
+                            results.set(None);
                             question_count.set(count);
                             question_pool.set(fq.clone());
                             session.set(sess);

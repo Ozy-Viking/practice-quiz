@@ -90,6 +90,12 @@ fn App() -> Element {
     let load_error: Signal<String> = use_signal(String::new);
     let results: Signal<Option<ResultsData>> = use_signal(|| None);
     let question_pool: Signal<Vec<QuizQuestion>> = use_signal(Vec::new);
+    let selected_topics = use_signal(HashSet::<String>::new);
+    let selected_locations = use_signal(HashSet::<String>::new);
+    let topic_regex_input = use_signal(String::new);
+    let location_regex_input = use_signal(String::new);
+    let seed_input = use_signal(String::new);
+    let active_seed = use_signal(|| 0u32);
     let mut light_mode = use_signal(initial_light_mode);
 
     let current = phase.read().clone();
@@ -151,6 +157,16 @@ fn App() -> Element {
                     question_count,
                     file_name,
                     load_error,
+                    session,
+                    selections,
+                    results,
+                    question_pool,
+                    selected_topics,
+                    selected_locations,
+                    topic_regex_input,
+                    location_regex_input,
+                    seed_input,
+                    active_seed,
                 }
             } else if current == AppPhase::Configuring {
                 ConfiguringView {
@@ -162,6 +178,13 @@ fn App() -> Element {
                     file_name,
                     load_error,
                     question_pool,
+                    selected_topics,
+                    selected_locations,
+                    topic_regex_input,
+                    location_regex_input,
+                    seed_input,
+                    active_seed,
+                    results,
                 }
             } else if current == AppPhase::InProgress {
                 QuizView {
@@ -170,6 +193,7 @@ fn App() -> Element {
                     session,
                     selections,
                     results,
+                    active_seed,
                 }
             } else if current == AppPhase::Submitted {
                 ResultsView {
@@ -182,6 +206,7 @@ fn App() -> Element {
                     file_name,
                     load_error,
                     question_pool,
+                    active_seed,
                 }
             }
         }

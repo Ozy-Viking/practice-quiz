@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::model::{
     AppPhase, QuestionStatus, QuizFile, QuizQuestion, ResultsData, SessionQuestion, results_json,
+    shuffle_session,
 };
 
 fn metadata_value(value: &Option<String>) -> Option<&str> {
@@ -140,10 +141,12 @@ pub fn ResultsView(
     mut file_name: Signal<String>,
     mut load_error: Signal<String>,
     question_pool: Signal<Vec<QuizQuestion>>,
+    active_seed: Signal<u32>,
 ) -> Element {
     let busy = use_signal(|| false);
     let feedback = use_signal(String::new);
     let failed = use_signal(|| false);
+    let mut keep_order = use_signal(|| true);
     let (res_list, total_score, total_max) =
         results
             .read()
@@ -175,6 +178,8 @@ pub fn ResultsView(
                 h2 { "Final Score" }
                 div { class: "score-number", "{total_score:.1} / {total_max:.0}" }
                 div { class: "score-percent", "{pct}%" }
+                super::SeedDisplay { seed: *active_seed.read() }
+
             }
             div { class: "results-export",
                 div { class: "button-row",
@@ -358,6 +363,31 @@ pub fn ResultsView(
                             }
                         }
                     }
+                }
+            }
+            div { class: "rerun-actions",
+                label { class: "rerun-order",
+                    input {
+                        r#type: "checkbox",
+                        checked: *keep_order.read(),
+                        onchange: move |evt| keep_order.set(evt.checked()),
+                    }
+                    "Keep question and answer order"
+                }
+                button {
+                    class: "btn btn-primary",
+                    onclick: move |_| {
+                        if session.read().is_empty() { return; }
+                        if !*keep_order.read() {
+                            let mut shuffled = session.read().clone();
+                            shuffle_session(&mut shuffled, &mut rand::thread_rng());
+                            session.set(shuffled);
+                        }
+                        selections.set(HashMap::new());
+                        results.set(None);
+                        phase.set(AppPhase::InProgress);
+                    },
+                    "Rerun same questions"
                 }
             }
             div { class: "button-row",

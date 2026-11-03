@@ -286,7 +286,8 @@ h2 {
 	font-weight: 600;
 }
 
-.config-row input[type="number"] {
+.config-row input[type="number"],
+.seed-row input {
 	width: 72px;
 	padding: 8px 10px;
 	background: var(--surface-raised);
@@ -298,9 +299,38 @@ h2 {
 	text-align: center;
 }
 
-.config-row input[type="number"]:focus {
+.config-row input[type="number"]:focus,
+.seed-row input:focus {
 	outline: 2px solid var(--primary);
 	outline-offset: 1px;
+}
+
+.settings-fields {
+	display: flex;
+	flex-wrap: wrap;
+	column-gap: 28px;
+}
+
+.seed-row {
+	flex-wrap: wrap;
+}
+
+.seed-row input {
+	width: 150px;
+	font-size: 1rem;
+}
+
+.seed-row input[aria-invalid="true"] {
+	border-color: var(--incorrect);
+}
+
+#seed-error {
+	white-space: normal;
+}
+
+.session-seed {
+	margin-block: 12px;
+	font-variant-numeric: tabular-nums;
 }
 
 .range-hint {
@@ -1243,4 +1273,40 @@ input[type="file"]::file-selector-button:hover {
 	flex-wrap: wrap;
 	align-items: center;
 	margin-top: 0;
+}
+
+.rerun-order {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 1rem 0;
+  font-size: 0.95rem;
+}
+
+.seed-copy {
+  background: transparent;
+  color: inherit;
+  border: 0;
+  padding: 4px 0;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 4px;
+}
+.seed-copy-status {
+  margin-inline-start: 10px;
+  font-size: 0.85rem;
+}
+.rerun-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  margin-top: 24px;
+}
+.rerun-actions .rerun-order {
+  margin: 0;
 }
