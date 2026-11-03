@@ -1230,3 +1230,17 @@ input[type="file"]::file-selector-button:hover {
 	cursor: not-allowed;
 	transform: none;
 }
+
+.results-card .score-banner {
+	margin-bottom: 14px;
+}
+
+.results-export {
+	margin-bottom: 14px;
+}
+
+.results-export .button-row {
+	flex-wrap: wrap;
+	align-items: center;
+	margin-top: 0;
+}
