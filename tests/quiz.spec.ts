@@ -128,6 +128,14 @@ test('copies and downloads the same complete results JSON', async ({ page, conte
   const copied = browserName === 'chromium'
     ? await page.evaluate(() => navigator.clipboard.readText())
     : await page.evaluate(() => (window as any).copiedResults as string);
+  await page.evaluate(() => {
+    const revoke = URL.revokeObjectURL.bind(URL);
+    (window as any).revokedExportUrls = [];
+    URL.revokeObjectURL = (url) => {
+      (window as any).revokedExportUrls.push(url);
+      revoke(url);
+    };
+  });
   const downloadEvent = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download Results JSON' }).click();
   const download = await downloadEvent;
@@ -156,6 +164,8 @@ test('copies and downloads the same complete results JSON', async ({ page, conte
     }],
   });
   await expect(page.getByRole('status')).toContainText('Download started.');
+  await expect(page.locator('a[download="quiz-results.json"]')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as any).revokedExportUrls.length)).toBe(1);
 });
 
 test('reports clipboard and download failures honestly and allows retry', async ({ page }) => {
@@ -181,4 +191,38 @@ test('reports clipboard and download failures honestly and allows retry', async 
   });
   await page.getByRole('button', { name: 'Copy Results JSON' }).click();
   await expect(page.getByRole('status')).toHaveText('Results JSON copied to clipboard.');
+});
+
+test('handles missing clipboard and cleans up failed download resources', async ({ page }) => {
+  await completeExportQuiz(page);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+    const createObjectURL = URL.createObjectURL.bind(URL);
+    const revokeObjectURL = URL.revokeObjectURL.bind(URL);
+    (window as any).exportUrls = { created: [], revoked: [] };
+    URL.createObjectURL = (blob) => {
+      const url = createObjectURL(blob);
+      (window as any).exportUrls.created.push(url);
+      return url;
+    };
+    URL.revokeObjectURL = (url) => {
+      (window as any).exportUrls.revoked.push(url);
+      revokeObjectURL(url);
+    };
+    const appendChild = document.body.appendChild.bind(document.body);
+    document.body.appendChild = ((node: Node) => {
+      if (node instanceof HTMLAnchorElement && node.download === 'quiz-results.json') {
+        throw new Error('Cannot append download anchor');
+      }
+      return appendChild(node);
+    }) as typeof document.body.appendChild;
+  });
+  await page.getByRole('button', { name: 'Copy Results JSON' }).click();
+  await expect(page.getByRole('status')).toContainText('Could not copy results.');
+  await page.getByRole('button', { name: 'Download Results JSON' }).click();
+  await expect(page.getByRole('status')).toContainText('Could not start the download.');
+  await expect(page.locator('a[download="quiz-results.json"]')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as any).exportUrls.revoked.length)).toBe(1);
+  expect(await page.evaluate(() => (window as any).exportUrls.created))
+    .toEqual(await page.evaluate(() => (window as any).exportUrls.revoked));
 });
