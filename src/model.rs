@@ -279,6 +279,28 @@ pub fn available_locations(quiz: &QuizFile) -> Vec<String> {
     locs.into_iter().collect()
 }
 
+/// Generator v1: ChaCha8, rand 0.8 shuffle, source array order preserved before shuffling.
+/// A fresh RNG controls both question selection and answer ordering on every call.
+pub fn build_seeded_session(
+    questions: &[QuizQuestion],
+    count: usize,
+    seed: u32,
+) -> Vec<SessionQuestion> {
+    use rand::SeedableRng;
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(u64::from(seed));
+    build_session(questions, count, &mut rng)
+}
+
+pub fn parse_seed(input: &str) -> Result<u32, &'static str> {
+    let input = input.trim();
+    if input.is_empty() || !input.bytes().all(|b| b.is_ascii_digit()) {
+        return Err("Enter a whole number from 0 to 4294967295 using decimal digits.");
+    }
+    input
+        .parse()
+        .map_err(|_| "Enter a whole number from 0 to 4294967295 using decimal digits.")
+}
+
 pub fn build_session(
     questions: &[QuizQuestion],
     count: usize,
@@ -329,6 +351,39 @@ pub fn build_session(
             }
         })
         .collect()
+}
+
+/// Shuffle an existing attempt without changing its questions or correct-answer identities.
+pub fn shuffle_session(session: &mut [SessionQuestion], rng: &mut impl rand::Rng) {
+    use rand::seq::SliceRandom;
+
+    fn shuffle_changed<T: Clone + PartialEq>(items: &mut [T], rng: &mut impl rand::Rng) {
+        let original = items.to_vec();
+        items.shuffle(rng);
+        if items.len() > 1 && items == original {
+            items.rotate_left(1);
+        }
+    }
+
+    shuffle_changed(session, rng);
+    for question in session {
+        let is_true_false = question.options.len() == 2
+            && question
+                .options
+                .iter()
+                .any(|(_, _, text)| text.eq_ignore_ascii_case("true"))
+            && question
+                .options
+                .iter()
+                .any(|(_, _, text)| text.eq_ignore_ascii_case("false"));
+        if !is_true_false {
+            shuffle_changed(&mut question.options, rng);
+        }
+        // IDs travel with their answers so scoring stays correct; labels follow display order.
+        for (index, (_, label, _)) in question.options.iter_mut().enumerate() {
+            *label = ((b'A' + index as u8) as char).to_string();
+        }
+    }
 }
 
 pub fn score_question(
@@ -567,6 +622,67 @@ mod tests {
             serde_json::from_str(&results_json(&quiz, "", &(vec![], 0.0, 0.0)).unwrap()).unwrap();
         assert_eq!(empty["percentage"], 0.0);
         assert_eq!(empty["questions"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn seed_validation_boundaries() {
+        for (input, expected) in [("0", 0), ("4294967295", u32::MAX), (" 00042\t", 42)] {
+            assert_eq!(parse_seed(input), Ok(expected));
+        }
+        for input in [
+            "",
+            " ",
+            "-1",
+            "+1",
+            "1.0",
+            "1e3",
+            "0x10",
+            "1 2",
+            "１２",
+            "4294967296",
+        ] {
+            assert!(parse_seed(input).is_err(), "accepted {input:?}");
+        }
+    }
+
+    #[test]
+    fn seeded_fixture_order_and_correct_mappings() {
+        let quiz: QuizFile =
+            serde_json::from_str(include_str!("../tests/fixtures/seeded-quiz.json")).unwrap();
+        let session = build_seeded_session(&quiz.questions, 4, 42);
+        let actual: Vec<_> = session
+            .iter()
+            .map(|q| {
+                serde_json::json!({
+                    "id": q.id,
+                    "text": q.text,
+                    "options": q.options.iter().map(|(_, _, text)| text).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        let expected: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../tests/fixtures/seeded-order.json")).unwrap();
+        assert_eq!(actual, expected);
+        for question in &session {
+            let source = quiz.questions.iter().find(|q| q.id == question.id).unwrap();
+            for (id, _, text) in &question.options {
+                assert_eq!(
+                    question.correct_ids.contains(id),
+                    source.correct_answers.contains(text)
+                );
+            }
+            if question.id == "two" {
+                assert_eq!(question.options[0].2, "True");
+                assert_eq!(question.options[1].2, "False");
+                assert_eq!(question.correct_ids, HashSet::from(["opt_1".to_string()]));
+            }
+        }
+        assert_eq!(session, build_seeded_session(&quiz.questions, 4, 42));
+        assert_eq!(session[..2], build_seeded_session(&quiz.questions, 2, 42));
+        assert_ne!(session, build_seeded_session(&quiz.questions, 4, 43));
+        assert_eq!(session, build_seeded_session(&quiz.questions, 100, 42));
+        assert!(build_seeded_session(&[], 4, 42).is_empty());
+        assert!(build_seeded_session(&quiz.questions, 0, 42).is_empty());
     }
 
     #[test]

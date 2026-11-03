@@ -1,0 +1,69 @@
+{
+  "title": "Seeded fixture",
+  "config": {
+    "default_question_count": 4
+  },
+  "questions": [
+    {
+      "id": "one",
+      "question": "Pick two even numbers.",
+      "correct_answers": [
+        "2",
+        "4"
+      ],
+      "incorrect_answers": [
+        "3",
+        "5"
+      ],
+      "metadata": {
+        "topic": "Numbers",
+        "study_location": "Week 1"
+      }
+    },
+    {
+      "id": "two",
+      "question": "False is false.",
+      "correct_answers": [
+        "False"
+      ],
+      "incorrect_answers": [
+        "True"
+      ],
+      "metadata": {
+        "topic": "Logic",
+        "study_location": "Week 1"
+      }
+    },
+    {
+      "id": "three",
+      "question": "Capital of France?",
+      "correct_answers": [
+        "Paris"
+      ],
+      "incorrect_answers": [
+        "London",
+        "Berlin",
+        "Madrid"
+      ],
+      "metadata": {
+        "topic": "Places",
+        "study_location": "Week 2"
+      }
+    },
+    {
+      "id": "four",
+      "question": "Select a primary colour.",
+      "correct_answers": [
+        "Blue"
+      ],
+      "incorrect_answers": [
+        "Orange",
+        "Purple"
+      ],
+      "metadata": {
+        "topic": "Colours",
+        "study_location": "Week 2"
+      }
+    }
+  ]
+}
