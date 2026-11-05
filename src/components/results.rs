@@ -92,11 +92,14 @@ async fn browser_export(_action: &str, _text: &str) -> bool {
     false
 }
 
+#[allow(clippy::too_many_arguments)]
 fn export_results(
     action: &'static str,
     quiz: Signal<Option<QuizFile>>,
     file_name: Signal<String>,
     results: Signal<Option<ResultsData>>,
+    active_seed: Signal<u32>,
+    session: Signal<Vec<SessionQuestion>>,
     mut busy: Signal<bool>,
     mut feedback: Signal<String>,
     mut failed: Signal<bool>,
@@ -104,7 +107,13 @@ fn export_results(
     feedback.set(String::new());
     failed.set(false);
     let json = match (quiz.read().as_ref(), results.read().as_ref()) {
-        (Some(quiz), Some(results)) => results_json(quiz, &file_name.read(), results),
+        (Some(quiz), Some(results)) => results_json(
+            quiz,
+            &file_name.read(),
+            *active_seed.read(),
+            &session.read(),
+            results,
+        ),
         _ => {
             failed.set(true);
             feedback.set("No completed results to export.".into());
@@ -187,14 +196,14 @@ pub fn ResultsView(
                         class: "btn btn-secondary",
                         r#type: "button",
                         disabled: busy(),
-                        onclick: move |_| export_results("copy", quiz, file_name, results, busy, feedback, failed),
+                        onclick: move |_| export_results("copy", quiz, file_name, results, active_seed, session, busy, feedback, failed),
                         "Copy Results JSON"
                     }
                     button {
                         class: "btn btn-secondary",
                         r#type: "button",
                         disabled: busy(),
-                        onclick: move |_| export_results("download", quiz, file_name, results, busy, feedback, failed),
+                        onclick: move |_| export_results("download", quiz, file_name, results, active_seed, session, busy, feedback, failed),
                         "Download Results JSON"
                     }
                 }

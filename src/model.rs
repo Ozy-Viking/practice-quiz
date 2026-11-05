@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct QuizFile {
@@ -156,30 +156,88 @@ pub struct QuestionResult {
 
 pub type ResultsData = (Vec<QuestionResult>, f64, f64);
 
+#[derive(Serialize)]
+struct QuestionExport<'a> {
+    id: &'a str,
+    text: &'a str,
+    status: QuestionStatus,
+    score: f64,
+    max_score: f64,
+    answers: BTreeMap<String, &'a str>,
+    correct: Vec<String>,
+    selected: Vec<String>,
+    missed: Vec<String>,
+    incorrect: Vec<String>,
+    metadata: &'a QuestionMetadata,
+}
+
+impl<'a> QuestionExport<'a> {
+    fn new(result: &'a QuestionResult, session: &'a SessionQuestion) -> Self {
+        fn labels(answers: &[(String, String)]) -> Vec<String> {
+            answers
+                .iter()
+                .map(|(label, _)| label.to_ascii_lowercase())
+                .collect()
+        }
+
+        Self {
+            id: &result.id,
+            text: &result.text,
+            status: result.status,
+            score: result.score,
+            max_score: result.max_score,
+            answers: session
+                .options
+                .iter()
+                .map(|(_, label, text)| (label.to_ascii_lowercase(), text.as_str()))
+                .collect(),
+            correct: labels(&result.correct_answers),
+            selected: labels(&result.selected_answers),
+            missed: labels(&result.missed_correct_answers),
+            incorrect: labels(&result.wrong_selected_answers),
+            metadata: &result.metadata,
+        }
+    }
+}
+
 /// A completed attempt, independent of the quiz input file format.
 #[derive(Serialize)]
 struct ResultsExport<'a> {
     format_version: u32,
     quiz_title: String,
     source_file: &'a str,
+    seed: u32,
     config: QuizConfig,
     question_count: usize,
     total_score: f64,
     total_max: f64,
     percentage: f64,
-    questions: &'a [QuestionResult],
+    questions: Vec<QuestionExport<'a>>,
 }
 
 pub fn results_json(
     quiz: &QuizFile,
     source_file: &str,
+    seed: u32,
+    session: &[SessionQuestion],
     results: &ResultsData,
 ) -> Result<String, serde_json::Error> {
     let (questions, total_score, total_max) = results;
+    if questions.len() != session.len()
+        || questions
+            .iter()
+            .zip(session)
+            .any(|(result, question)| result.id != question.id)
+    {
+        return Err(<serde_json::Error as serde::ser::Error>::custom(
+            "Completed results do not match the session",
+        ));
+    }
     serde_json::to_string_pretty(&ResultsExport {
-        format_version: 1,
+        format_version: 2,
         quiz_title: quiz.display_title(),
         source_file,
+        seed,
         config: quiz.effective_config(),
         question_count: questions.len(),
         total_score: *total_score,
@@ -189,7 +247,11 @@ pub fn results_json(
         } else {
             0.0
         },
-        questions,
+        questions: questions
+            .iter()
+            .zip(session)
+            .map(|(result, question)| QuestionExport::new(result, question))
+            .collect(),
     })
 }
 
@@ -554,7 +616,7 @@ mod tests {
     }
 
     #[test]
-    fn exports_completed_attempt_with_answers_metadata_and_source() {
+    fn exports_completed_attempt_with_answers_metadata_source_and_seed() {
         let mut quiz = sample_quiz();
         quiz.title = "Quiz \"quoted\"\n日本語 </script>".into();
         let mut rng = SmallRng::from_seed([2; 32]);
@@ -564,11 +626,13 @@ mod tests {
             .map(|q| (q.id.clone(), [q.options[0].0.clone()].into_iter().collect()))
             .collect();
         let results = build_results(&session, &selections, &quiz.effective_config());
-        let text = results_json(&quiz, "input\\quiz.json", &results).unwrap();
+        let text = results_json(&quiz, "input\\quiz.json", 42, &session, &results).unwrap();
         let exported: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert!(text.contains("\n  \"format_version\""));
+        assert_eq!(exported["format_version"], 2);
         assert_eq!(exported["quiz_title"], quiz.title);
         assert_eq!(exported["source_file"], "input\\quiz.json");
+        assert_eq!(exported["seed"], 42);
         assert_eq!(exported["question_count"], 3);
         assert_eq!(exported["total_score"], results.1);
         assert_eq!(exported["total_max"], results.2);
@@ -581,21 +645,27 @@ mod tests {
             .zip(&results.0)
         {
             assert_eq!(json["id"], result.id);
+            let labels = |answers: &[(String, String)]| {
+                answers
+                    .iter()
+                    .map(|(label, _)| label.to_ascii_lowercase())
+                    .collect::<Vec<_>>()
+            };
             assert_eq!(
-                json["selected_answers"],
-                serde_json::to_value(&result.selected_answers).unwrap()
+                json["selected"],
+                serde_json::to_value(labels(&result.selected_answers)).unwrap()
             );
             assert_eq!(
-                json["correct_answers"],
-                serde_json::to_value(&result.correct_answers).unwrap()
+                json["correct"],
+                serde_json::to_value(labels(&result.correct_answers)).unwrap()
             );
             assert_eq!(
-                json["missed_correct_answers"],
-                serde_json::to_value(&result.missed_correct_answers).unwrap()
+                json["missed"],
+                serde_json::to_value(labels(&result.missed_correct_answers)).unwrap()
             );
             assert_eq!(
-                json["wrong_selected_answers"],
-                serde_json::to_value(&result.wrong_selected_answers).unwrap()
+                json["incorrect"],
+                serde_json::to_value(labels(&result.wrong_selected_answers)).unwrap()
             );
             assert_eq!(
                 json["metadata"],
@@ -611,17 +681,112 @@ mod tests {
         let session = build_session(&quiz.questions, 1, &mut rng);
         let results = build_results(&session, &Default::default(), &quiz.effective_config());
         let exported: serde_json::Value =
-            serde_json::from_str(&results_json(&quiz, "quiz.json", &results).unwrap()).unwrap();
+            serde_json::from_str(&results_json(&quiz, "quiz.json", 0, &session, &results).unwrap())
+                .unwrap();
+        assert_eq!(exported["seed"], 0);
         assert_eq!(exported["questions"][0]["status"], "unanswered");
-        assert_eq!(
-            exported["questions"][0]["selected_answers"],
-            serde_json::json!([])
-        );
+        assert_eq!(exported["questions"][0]["selected"], serde_json::json!([]));
         assert_eq!(exported["percentage"], 0.0);
-        let empty: serde_json::Value =
-            serde_json::from_str(&results_json(&quiz, "", &(vec![], 0.0, 0.0)).unwrap()).unwrap();
+        let empty: serde_json::Value = serde_json::from_str(
+            &results_json(&quiz, "", u32::MAX, &[], &(vec![], 0.0, 0.0)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(empty["seed"], u32::MAX);
         assert_eq!(empty["percentage"], 0.0);
         assert_eq!(empty["questions"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn export_v2_includes_all_options_and_classifies_labels() {
+        let quiz = sample_quiz();
+        let session = vec![SessionQuestion {
+            id: "q1".into(),
+            text: "Which numbers are even?".into(),
+            options: [
+                ("opt_0", "A", "2"),
+                ("opt_1", "B", "4"),
+                ("opt_2", "C", "3"),
+                ("opt_3", "D", "5"),
+            ]
+            .map(|(id, label, text)| (id.into(), label.into(), text.into()))
+            .to_vec(),
+            correct_ids: ["opt_0".into(), "opt_1".into()].into_iter().collect(),
+            metadata: QuestionMetadata::default(),
+        }];
+        for (selected_ids, selected, missed, incorrect, status, score) in [
+            (
+                vec!["opt_0", "opt_2"],
+                vec!["a", "c"],
+                vec!["b"],
+                vec!["c"],
+                "partially_correct",
+                0.0,
+            ),
+            (
+                vec!["opt_0", "opt_1"],
+                vec!["a", "b"],
+                vec![],
+                vec![],
+                "correct",
+                2.0,
+            ),
+            (vec![], vec![], vec!["a", "b"], vec![], "unanswered", 0.0),
+            (
+                vec!["opt_2"],
+                vec!["c"],
+                vec!["a", "b"],
+                vec!["c"],
+                "incorrect",
+                0.0,
+            ),
+        ] {
+            let selections = [(
+                "q1".into(),
+                selected_ids.into_iter().map(String::from).collect(),
+            )]
+            .into_iter()
+            .collect();
+            let results = build_results(&session, &selections, &quiz.effective_config());
+            let json: serde_json::Value = serde_json::from_str(
+                &results_json(&quiz, "quiz.json", 42, &session, &results).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                json["questions"][0],
+                serde_json::json!({
+                    "id": "q1",
+                    "text": "Which numbers are even?",
+                    "status": status,
+                    "score": score,
+                    "max_score": 2.0,
+                    "answers": {"a": "2", "b": "4", "c": "3", "d": "5"},
+                    "correct": ["a", "b"],
+                    "selected": selected,
+                    "missed": missed,
+                    "incorrect": incorrect,
+                    "metadata": serde_json::to_value(QuestionMetadata::default()).unwrap(),
+                })
+            );
+            assert_eq!(json["total_score"], score);
+            assert_eq!(json["total_max"], 2.0);
+            assert_eq!(json["percentage"], score / 2.0 * 100.0);
+        }
+    }
+
+    #[test]
+    fn export_rejects_results_from_a_different_session() {
+        let quiz = sample_quiz();
+        let mut session = build_seeded_session(&quiz.questions, 3, 42);
+        let results = build_results(&session, &Default::default(), &quiz.effective_config());
+        session.swap(0, 1);
+        assert_eq!(
+            results_json(&quiz, "quiz.json", 42, &session, &results)
+                .unwrap_err()
+                .to_string(),
+            "Completed results do not match the session"
+        );
+        session.pop();
+        assert!(results_json(&quiz, "quiz.json", 42, &session, &results).is_err());
     }
 
     #[test]

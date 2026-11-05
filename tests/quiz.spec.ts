@@ -123,6 +123,7 @@ test('copies and downloads the same complete results JSON', async ({ page, conte
     });
   }
   await completeExportQuiz(page);
+  const seed = Number((await page.locator('.session-seed').innerText()).replace('Seed: ', ''));
   await page.getByRole('button', { name: 'Copy Results JSON' }).click();
   await expect(page.locator('.results-export').getByRole('status')).toHaveText('Results JSON copied to clipboard.');
   const copied = browserName === 'chromium'
@@ -144,9 +145,10 @@ test('copies and downloads the same complete results JSON', async ({ page, conte
   expect(downloaded).toBe(copied);
   const result = JSON.parse(downloaded);
   expect(result).toMatchObject({
-    format_version: 1,
+    format_version: 2,
     quiz_title: trueFalseQuizFixture.title,
     source_file: 'true-false-quiz.json',
+    seed,
     question_count: 1,
     total_score: 2,
     total_max: 2,
@@ -156,16 +158,107 @@ test('copies and downloads the same complete results JSON', async ({ page, conte
       status: 'correct',
       score: 2,
       max_score: 2,
-      selected_answers: [['A', 'True']],
-      correct_answers: [['A', 'True']],
-      missed_correct_answers: [],
-      wrong_selected_answers: [],
+      answers: { a: 'True', b: 'False' },
+      correct: ['a'],
+      selected: ['a'],
+      missed: [],
+      incorrect: [],
       metadata: trueFalseQuizFixture.questions[0].metadata,
     }],
+  });
+  expect(result.questions[0]).toEqual({
+    id: 'tf-1',
+    text: trueFalseQuizFixture.questions[0].question,
+    status: 'correct',
+    score: 2,
+    max_score: 2,
+    answers: { a: 'True', b: 'False' },
+    correct: ['a'],
+    selected: ['a'],
+    missed: [],
+    incorrect: [],
+    metadata: {
+      ...trueFalseQuizFixture.questions[0].metadata,
+      notes: null,
+      timestamp: null,
+      answer: null,
+    },
   });
   await expect(page.locator('.results-export').getByRole('status')).toContainText('Download started.');
   await expect(page.locator('a[download="quiz-results.json"]')).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => (window as any).revokedExportUrls.length)).toBe(1);
+});
+
+test('exports complete answer mappings for partial answers and an unanswered shuffled rerun', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (text: string) => { (window as any).copiedResults = text; } },
+    });
+  });
+  const quiz = {
+    ...trueFalseQuizFixture,
+    questions: [{
+      ...trueFalseQuizFixture.questions[0],
+      id: 'multi-1',
+      question: 'Which numbers are even?',
+      correct_answers: ['2', '4'],
+      incorrect_answers: ['3', '5'],
+    }],
+  };
+  await uploadQuiz(page, quiz);
+  await page.getByLabel('Seed:', { exact: true }).fill('42');
+  await page.getByRole('button', { name: /Start Quiz/ }).click();
+  const original = (await quizContent(page))[0];
+  const answers = Object.fromEntries(original.options.map((text, index) => [String.fromCharCode(97 + index), text]));
+  const labelsFor = (texts: string[]) => Object.entries(answers)
+    .filter(([, text]) => texts.includes(text!))
+    .map(([label]) => label);
+  for (const answer of ['2', '3']) {
+    await page.locator('.option-btn').filter({ has: page.getByText(answer, { exact: true }) }).click();
+  }
+  await page.getByRole('button', { name: /Submit Answers/ }).click();
+  await page.getByRole('button', { name: 'Copy Results JSON' }).click();
+  await expect(page.locator('.results-export').getByRole('status')).toHaveText('Results JSON copied to clipboard.');
+  const partial = JSON.parse(await page.evaluate(() => (window as any).copiedResults as string));
+  expect(partial).toMatchObject({ format_version: 2, seed: 42, total_score: 0, total_max: 2, percentage: 0 });
+  expect(partial.questions[0]).toMatchObject({
+    id: 'multi-1',
+    status: 'partially_correct',
+    score: 0,
+    max_score: 2,
+    answers,
+    correct: labelsFor(['2', '4']),
+    selected: labelsFor(['2', '3']),
+    missed: labelsFor(['4']),
+    incorrect: labelsFor(['3']),
+  });
+  expect(Object.keys(partial.questions[0].answers)).toEqual(['a', 'b', 'c', 'd']);
+
+  await page.getByLabel('Keep question and answer order').uncheck();
+  await page.getByRole('button', { name: 'Rerun same questions' }).click();
+  const rerun = (await quizContent(page))[0];
+  const rerunAnswers = Object.fromEntries(rerun.options.map((text, index) => [String.fromCharCode(97 + index), text]));
+  expect(rerun.options).not.toEqual(original.options);
+  await page.getByRole('button', { name: /Submit Answers/ }).click();
+  await page.getByRole('button', { name: 'Copy Results JSON' }).click();
+  await expect(page.locator('.results-export').getByRole('status')).toHaveText('Results JSON copied to clipboard.');
+  const unanswered = JSON.parse(await page.evaluate(() => (window as any).copiedResults as string));
+  const correct = Object.entries(rerunAnswers)
+    .filter(([, text]) => ['2', '4'].includes(text!))
+    .map(([label]) => label);
+  expect(unanswered).toMatchObject({ format_version: 2, seed: 42, total_score: 0, total_max: 2, percentage: 0 });
+  expect(unanswered.questions[0]).toMatchObject({
+    status: 'unanswered',
+    score: 0,
+    max_score: 2,
+    answers: rerunAnswers,
+    correct,
+    selected: [],
+    missed: correct,
+    incorrect: [],
+  });
+  expect(Object.keys(unanswered.questions[0].answers)).toEqual(['a', 'b', 'c', 'd']);
 });
 
 test('reports clipboard and download failures honestly and allows retry', async ({ page }) => {
