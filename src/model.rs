@@ -785,6 +785,7 @@ mod tests {
                 .to_string(),
             "Completed results do not match the session"
         );
+        session.swap(0, 1);
         session.pop();
         assert!(results_json(&quiz, "quiz.json", 42, &session, &results).is_err());
     }
