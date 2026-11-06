@@ -1310,3 +1310,33 @@ input[type="file"]::file-selector-button:hover {
 .rerun-actions .rerun-order {
   margin: 0;
 }
+
+/* Written responses and optional study hints share the current theme palette. */
+.short-answer-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: .5rem;
+  padding: .85rem;
+  border: 1px solid var(--border);
+  border-radius: .5rem;
+  background: var(--surface-raised);
+  color: inherit;
+  font: inherit;
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 8rem;
+}
+.short-answer-input:focus-visible,
+.upload-drop-target:focus-within { outline: 2px solid var(--primary); outline-offset: 4px; }
+.short-answer-response, .hint-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.short-answer-response { padding: 1rem; border-left: 3px solid var(--text-muted); }
+.unmarked-label, .available-marks, .hint-usage { display: block; margin: .5rem 0; font-size: .9rem; }
+.status-unmarked { border-color: var(--text-muted); }
+.result-badge.status-unmarked { color: inherit; background: rgb(148 163 184 / 15%); }
+.question-hint { margin-top: .75rem; }
+.hint-toggle { font-size: .9rem; }
+.hint-text { margin: .5rem 0; }
+.upload-drop-target { border: 2px dashed var(--text-muted); border-radius: .75rem; padding: 1.5rem; margin: 1rem 0; }
+.upload-drop-target label { display: block; margin-bottom: .75rem; font-weight: 600; }
+.upload-drop-target.dragging { border-color: var(--primary); background: rgb(129 140 248 / 15%); }

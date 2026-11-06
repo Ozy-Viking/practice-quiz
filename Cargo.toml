@@ -15,7 +15,7 @@ dioxus-free-icons = { version = "0.10.0", features = ["lucide"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
-web-sys = { version = "0.3", features = ["Window", "Location", "Navigator", "Clipboard", "Storage", "MediaQueryList", "Blob", "BlobPropertyBag", "Url", "Document", "HtmlElement", "HtmlAnchorElement", "Element", "Node"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "Navigator", "Clipboard", "Storage", "MediaQueryList", "Blob", "BlobPropertyBag", "Url", "Document", "HtmlElement", "HtmlAnchorElement", "Element", "Node", "DragEvent", "DataTransfer", "File"] }
 wasm-bindgen-futures = "0.4"
 wasm-bindgen = "0.2.123"
 js-sys = "0.3.100"

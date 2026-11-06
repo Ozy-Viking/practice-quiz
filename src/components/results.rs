@@ -1,11 +1,9 @@
-use dioxus::prelude::*;
-use std::collections::{HashMap, HashSet};
-
 use crate::model::{
-    AppPhase, QuestionStatus, QuizFile, QuizQuestion, ResultsData, SessionQuestion, results_json,
-    shuffle_session,
+    AppPhase, HintUsage, QuestionStatus, QuizFile, QuizQuestion, Responses, ResultDetails,
+    ResultsData, SessionQuestion, results_json, shuffle_session,
 };
-
+use dioxus::prelude::*;
+use std::collections::HashMap;
 fn metadata_value(value: &Option<String>) -> Option<&str> {
     value.as_deref().filter(|v| !v.trim().is_empty())
 }
@@ -144,7 +142,8 @@ pub fn ResultsView(
     mut phase: Signal<AppPhase>,
     mut quiz: Signal<Option<QuizFile>>,
     mut session: Signal<Vec<SessionQuestion>>,
-    mut selections: Signal<HashMap<String, HashSet<String>>>,
+    mut selections: Signal<Responses>,
+    mut hint_usage: Signal<HintUsage>,
     mut results: Signal<Option<ResultsData>>,
     mut question_count: Signal<usize>,
     mut file_name: Signal<String>,
@@ -170,8 +169,28 @@ pub fn ResultsView(
     let study_items: Vec<_> = res_list
         .iter()
         .enumerate()
-        .filter(|(_, qr)| qr.score < qr.max_score || !qr.wrong_selected_answers.is_empty())
+        .filter(|(_, qr)| {
+            qr.choice().is_some_and(|choice| {
+                choice.score < qr.max_score || !choice.wrong_selected_answers.is_empty()
+            })
+        })
         .collect();
+    let score_text = if total_score.fract() == 0.0 {
+        format!("{total_score:.1}")
+    } else {
+        total_score.to_string()
+    };
+    let scored_count = res_list.iter().filter(|qr| qr.choice().is_some()).count();
+    let total_available: f64 = res_list.iter().map(|qr| qr.max_score).sum();
+    let answered_count = res_list
+        .iter()
+        .filter(|qr| {
+            !matches!(
+                qr.status,
+                QuestionStatus::Unanswered | QuestionStatus::UnansweredUnmarked
+            )
+        })
+        .count();
     let grade_class = if pct >= 80 {
         "grade-excellent"
     } else if pct >= 60 {
@@ -183,13 +202,24 @@ pub fn ResultsView(
     };
     rsx! {
         div { class: "card results-card",
-            div { class: "score-banner {grade_class}",
-                h2 { "Final Score" }
-                div { class: "score-number", "{total_score:.1} / {total_max:.0}" }
-                div { class: "score-percent", "{pct}%" }
-                super::SeedDisplay { seed: *active_seed.read() }
-
+            if scored_count > 0 {
+                div { class: "score-banner {grade_class}",
+                    h2 {
+                        if scored_count < res_list.len() {
+                            "Multiple-choice Score"
+                        } else {
+                            "Final Score"
+                        }
+                    }
+                    div { class: "score-number", "{score_text} / {total_max}" }
+                    div { class: "score-percent", "{pct}%" }
+                }
+            } else {
+                h2 { "Quiz Complete" }
             }
+            p { class: "completion-summary", "{answered_count}/{res_list.len()} answered" }
+            p { class: "total-available-marks", "Total available marks: {total_available}" }
+            super::SeedDisplay { seed: *active_seed.read() }
             div { class: "results-export",
                 div { class: "button-row",
                     button {
@@ -228,11 +258,12 @@ pub fn ResultsView(
                         for (idx, qr) in study_items {
                             {
                                 let meta = &qr.metadata;
+                                let choice = qr.choice().unwrap();
                                 rsx! {
                                     div { class: "study-summary-item",
                                         div { class: "study-summary-topline",
                                             a { class: "study-summary-question", href: "#result-q-{idx + 1}", "Q{idx + 1}: {qr.id}" }
-                                            span { class: "study-summary-score", "{qr.score:.2}/{qr.max_score:.1}" }
+                                            span { class: "study-summary-score", "{choice.score}/{qr.max_score}" }
                                         }
                                         p { class: "study-summary-text", "{qr.text}" }
                                         div { class: "study-summary-meta",
@@ -266,12 +297,17 @@ pub fn ResultsView(
                         QuestionStatus::PartiallyCorrect => "status-partial",
                         QuestionStatus::Incorrect => "status-incorrect",
                         QuestionStatus::Unanswered => "status-unanswered",
+                        QuestionStatus::AnsweredUnmarked | QuestionStatus::UnansweredUnmarked => {
+                            "status-unmarked"
+                        }
                     };
                     let status_text = match qr.status {
                         QuestionStatus::Correct => "Correct",
                         QuestionStatus::PartiallyCorrect => "Partial",
                         QuestionStatus::Incorrect => "Incorrect",
                         QuestionStatus::Unanswered => "Unanswered",
+                        QuestionStatus::AnsweredUnmarked => "Answered — unmarked",
+                        QuestionStatus::UnansweredUnmarked => "Unanswered — unmarked",
                     };
                     rsx! {
                         div {
@@ -281,57 +317,74 @@ pub fn ResultsView(
                             div { class: "result-header",
                                 span { class: "result-number", "Q{idx + 1}" }
                                 span { class: "result-badge {status_class}", "{status_text}" }
-                                span { class: "result-score", "{qr.score:.2}/{qr.max_score:.1}" }
+                                if let Some(choice) = qr.choice() {
+                                    span { class: "result-score", "{choice.score}/{qr.max_score}" }
+                                }
                             }
                             p { class: "result-question", "{qr.text}" }
-                            div { class: "result-details",
-                                if !qr.correct_answers.is_empty() {
-                                    div { class: "detail-row correct-row",
-                                        span { class: "detail-label", "Correct:" }
-                                        div { class: "detail-values",
-                                            for (label, text) in qr.correct_answers.iter() {
-                                                div { class: "answer-entry badge-correct",
-                                                    span { class: "answer-label", "{label}" }
-                                                    span { class: "answer-text", "{text}" }
+                            p { class: "available-marks", "Available marks: {qr.max_score}" }
+                            if !qr.hints.is_empty() {
+                                p { class: "hint-usage",
+                                    if qr.viewed_hint_indices.is_empty() {
+                                        "No hints viewed"
+                                    } else {
+                                        "Hints viewed: {qr.viewed_hint_indices.len()} of {qr.hints.len()}"
+                                    }
+                                }
+                            }
+                            if let ResultDetails::ShortAnswer { response } = &qr.details {
+                                div { class: "short-answer-response", "{response}" }
+                            }
+                            if let Some(choice) = qr.choice() {
+                                div { class: "result-details",
+                                    if !choice.correct_answers.is_empty() {
+                                        div { class: "detail-row correct-row",
+                                            span { class: "detail-label", "Correct:" }
+                                            div { class: "detail-values",
+                                                for (label, text) in choice.correct_answers.iter() {
+                                                    div { class: "answer-entry badge-correct",
+                                                        span { class: "answer-label", "{label}" }
+                                                        span { class: "answer-text", "{text}" }
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                }
-                                if !qr.missed_correct_answers.is_empty() {
-                                    div { class: "detail-row missed-row",
-                                        span { class: "detail-label", "Missed:" }
-                                        div { class: "detail-values",
-                                            for (label, text) in qr.missed_correct_answers.iter() {
-                                                div { class: "answer-entry badge-missed",
-                                                    span { class: "answer-label", "{label}" }
-                                                    span { class: "answer-text", "{text}" }
+                                    if !choice.missed_correct_answers.is_empty() {
+                                        div { class: "detail-row missed-row",
+                                            span { class: "detail-label", "Missed:" }
+                                            div { class: "detail-values",
+                                                for (label, text) in choice.missed_correct_answers.iter() {
+                                                    div { class: "answer-entry badge-missed",
+                                                        span { class: "answer-label", "{label}" }
+                                                        span { class: "answer-text", "{text}" }
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                }
-                                if !qr.wrong_selected_answers.is_empty() {
-                                    div { class: "detail-row wrong-row",
-                                        span { class: "detail-label", "Wrong:" }
-                                        div { class: "detail-values",
-                                            for (label, text) in qr.wrong_selected_answers.iter() {
-                                                div { class: "answer-entry badge-wrong",
-                                                    span { class: "answer-label", "{label}" }
-                                                    span { class: "answer-text", "{text}" }
+                                    if !choice.wrong_selected_answers.is_empty() {
+                                        div { class: "detail-row wrong-row",
+                                            span { class: "detail-label", "Wrong:" }
+                                            div { class: "detail-values",
+                                                for (label, text) in choice.wrong_selected_answers.iter() {
+                                                    div { class: "answer-entry badge-wrong",
+                                                        span { class: "answer-label", "{label}" }
+                                                        span { class: "answer-text", "{text}" }
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                }
-                                if !qr.selected_answers.is_empty() {
-                                    div { class: "detail-row selected-row",
-                                        span { class: "detail-label", "You chose:" }
-                                        div { class: "detail-values",
-                                            for (label, text) in qr.selected_answers.iter() {
-                                                div { class: "answer-entry badge-selected",
-                                                    span { class: "answer-label", "{label}" }
-                                                    span { class: "answer-text", "{text}" }
+                                    if !choice.selected_answers.is_empty() {
+                                        div { class: "detail-row selected-row",
+                                            span { class: "detail-label", "You chose:" }
+                                            div { class: "detail-values",
+                                                for (label, text) in choice.selected_answers.iter() {
+                                                    div { class: "answer-entry badge-selected",
+                                                        span { class: "answer-label", "{label}" }
+                                                        span { class: "answer-text", "{text}" }
+                                                    }
                                                 }
                                             }
                                         }
@@ -386,13 +439,16 @@ pub fn ResultsView(
                 button {
                     class: "btn btn-primary",
                     onclick: move |_| {
-                        if session.read().is_empty() { return; }
+                        if session.read().is_empty() {
+                            return;
+                        }
                         if !*keep_order.read() {
                             let mut shuffled = session.read().clone();
                             shuffle_session(&mut shuffled, &mut rand::thread_rng());
                             session.set(shuffled);
                         }
                         selections.set(HashMap::new());
+                        hint_usage.set(HashMap::new());
                         results.set(None);
                         phase.set(AppPhase::InProgress);
                     },
@@ -404,13 +460,7 @@ pub fn ResultsView(
                     class: "btn btn-primary",
                     onclick: move |_| {
                         phase.set(AppPhase::Upload);
-                        quiz.set(None);
-                        session.set(Vec::new());
-                        selections.set(HashMap::new());
-                        results.set(None);
-                        file_name.set(String::new());
                         load_error.set(String::new());
-                        question_count.set(0);
                     },
                     "← Load New Quiz"
                 }
@@ -418,6 +468,7 @@ pub fn ResultsView(
                     class: "btn btn-secondary",
                     onclick: move |_| {
                         selections.set(HashMap::new());
+                        hint_usage.set(HashMap::new());
                         results.set(None);
                         session.set(Vec::new());
                         phase.set(AppPhase::Configuring);

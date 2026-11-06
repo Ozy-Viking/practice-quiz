@@ -4,7 +4,9 @@
 	"title": "Practice Quiz",
 	"description": "Schema for practice-quiz JSON files",
 	"type": "object",
-	"required": ["questions"],
+	"required": [
+		"questions"
+	],
 	"additionalProperties": false,
 	"properties": {
 		"$schema": {
@@ -43,7 +45,7 @@
 					"type": "number",
 					"exclusiveMinimum": 0,
 					"default": 1.0,
-					"description": "Score awarded for a fully correct answer"
+					"description": "Default available marks for questions without a marks override; defaults to 1."
 				},
 				"allow_negative_mark": {
 					"type": "boolean",
@@ -70,9 +72,12 @@
 		},
 		"QuizQuestion": {
 			"type": "object",
-			"required": ["id", "question"],
+			"required": [
+				"id",
+				"question"
+			],
 			"additionalProperties": false,
-			"description": "Must have at least one correct answer. No upper limit on total answers.",
+			"description": "Multiple-choice or unmarked short-answer question. IDs must be unique within the quiz.",
 			"properties": {
 				"id": {
 					"type": "string",
@@ -87,15 +92,13 @@
 					"items": {
 						"type": "string"
 					},
-					"minItems": 1,
-					"description": "One or more correct answer strings (alias: correctAnswers)"
+					"description": "Required for multiple choice: one or more correct strings (alias: correctAnswers). Omit or leave empty for short answers."
 				},
 				"correctAnswers": {
 					"type": "array",
 					"items": {
 						"type": "string"
 					},
-					"minItems": 1,
 					"description": "Alias for correct_answers"
 				},
 				"incorrect_answers": {
@@ -103,7 +106,7 @@
 					"items": {
 						"type": "string"
 					},
-					"description": "Wrong answer strings (alias: incorrectAnswers)"
+					"description": "Required for multiple choice: wrong strings, may be empty (alias: incorrectAnswers). Omit or leave empty for short answers."
 				},
 				"incorrectAnswers": {
 					"type": "array",
@@ -123,22 +126,92 @@
 				"hiddenInfo": {
 					"$ref": "#/definitions/QuestionMetadata",
 					"description": "Alias for metadata"
+				},
+				"type": {
+					"type": "string",
+					"enum": [
+						"multiple_choice",
+						"short_answer"
+					],
+					"default": "multiple_choice",
+					"description": "Omit for multiple choice; short_answer accepts unmarked text without answer options."
+				},
+				"marks": {
+					"type": "number",
+					"exclusiveMinimum": 0,
+					"description": "Positive available marks; overrides the quiz default, including fractional values."
+				},
+				"hints": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"pattern": "\\S"
+					},
+					"description": "Optional plain-text hints, hidden until clicked. Empty or omitted means no hint controls. Usage is recorded without a score penalty."
 				}
 			},
-			"oneOf": [
-				{
-					"required": ["correct_answers", "incorrect_answers"]
-				},
-				{
-					"required": ["correct_answers", "incorrectAnswers"]
-				},
-				{
-					"required": ["correctAnswers", "incorrect_answers"]
-				},
-				{
-					"required": ["correctAnswers", "incorrectAnswers"]
+			"if": {
+				"required": [
+					"type"
+				],
+				"properties": {
+					"type": {
+						"const": "short_answer"
+					}
 				}
-			]
+			},
+			"then": {
+				"properties": {
+					"correct_answers": {
+						"maxItems": 0
+					},
+					"incorrect_answers": {
+						"maxItems": 0
+					},
+					"correctAnswers": {
+						"maxItems": 0
+					},
+					"incorrectAnswers": {
+						"maxItems": 0
+					}
+				}
+			},
+			"else": {
+				"oneOf": [
+					{
+						"required": [
+							"correct_answers",
+							"incorrect_answers"
+						]
+					},
+					{
+						"required": [
+							"correct_answers",
+							"incorrectAnswers"
+						]
+					},
+					{
+						"required": [
+							"correctAnswers",
+							"incorrect_answers"
+						]
+					},
+					{
+						"required": [
+							"correctAnswers",
+							"incorrectAnswers"
+						]
+					}
+				],
+				"properties": {
+					"correct_answers": {
+						"minItems": 1
+					},
+					"correctAnswers": {
+						"minItems": 1
+					}
+				}
+			}
 		},
 		"QuestionMetadata": {
 			"type": "object",
