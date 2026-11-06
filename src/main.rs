@@ -84,7 +84,8 @@ fn App() -> Element {
     let phase: Signal<AppPhase> = use_signal(|| AppPhase::Upload);
     let quiz: Signal<Option<QuizFile>> = use_signal(|| None);
     let session: Signal<Vec<SessionQuestion>> = use_signal(Vec::new);
-    let selections: Signal<HashMap<String, HashSet<String>>> = use_signal(HashMap::new);
+    let selections: Signal<Responses> = use_signal(HashMap::new);
+    let hint_usage: Signal<HintUsage> = use_signal(HashMap::new);
     let question_count: Signal<usize> = use_signal(|| 0);
     let file_name: Signal<String> = use_signal(String::new);
     let load_error: Signal<String> = use_signal(String::new);
@@ -159,6 +160,7 @@ fn App() -> Element {
                     load_error,
                     session,
                     selections,
+                    hint_usage,
                     results,
                     question_pool,
                     selected_topics,
@@ -174,6 +176,7 @@ fn App() -> Element {
                     quiz,
                     session,
                     selections,
+                    hint_usage,
                     question_count,
                     file_name,
                     load_error,
@@ -192,6 +195,7 @@ fn App() -> Element {
                     quiz,
                     session,
                     selections,
+                    hint_usage,
                     results,
                     active_seed,
                 }
@@ -201,6 +205,7 @@ fn App() -> Element {
                     quiz,
                     session,
                     selections,
+                    hint_usage,
                     results,
                     question_count,
                     file_name,

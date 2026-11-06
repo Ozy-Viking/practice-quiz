@@ -53,7 +53,7 @@ test('loads a valid quiz file and shows quiz settings', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Playwright Practice Quiz' })).toBeVisible();
   await expect(page.getByText('Loaded: quiz.json (2 questions)')).toBeVisible();
   await expect(page.getByText('Negative marking disabled (scores clamped at 0)')).toBeVisible();
-  await expect(page.getByText('Each question is worth 2.0 marks')).toBeVisible();
+  await expect(page.getByText('Default marks per question: 2. Questions can override this default.')).toBeVisible();
   await expect(page.locator('input[type="number"]')).toHaveValue('1');
   await expect(page.getByText('of 2')).toBeVisible();
 });
@@ -145,7 +145,7 @@ test('copies and downloads the same complete results JSON', async ({ page, conte
   expect(downloaded).toBe(copied);
   const result = JSON.parse(downloaded);
   expect(result).toMatchObject({
-    format_version: 2,
+    format_version: 3,
     quiz_title: trueFalseQuizFixture.title,
     source_file: 'true-false-quiz.json',
     seed,
@@ -167,6 +167,7 @@ test('copies and downloads the same complete results JSON', async ({ page, conte
     }],
   });
   expect(result.questions[0]).toEqual({
+    type: 'multiple_choice', hints: [], hints_viewed: false, viewed_hint_indices: [],
     id: 'tf-1',
     text: trueFalseQuizFixture.questions[0].question,
     status: 'correct',
@@ -221,7 +222,7 @@ test('exports complete answer mappings for partial answers and an unanswered shu
   await page.getByRole('button', { name: 'Copy Results JSON' }).click();
   await expect(page.locator('.results-export').getByRole('status')).toHaveText('Results JSON copied to clipboard.');
   const partial = JSON.parse(await page.evaluate(() => (window as any).copiedResults as string));
-  expect(partial).toMatchObject({ format_version: 2, seed: 42, total_score: 0, total_max: 2, percentage: 0 });
+  expect(partial).toMatchObject({ format_version: 3, seed: 42, total_score: 0, total_max: 2, percentage: 0 });
   expect(partial.questions[0]).toMatchObject({
     id: 'multi-1',
     status: 'partially_correct',
@@ -247,7 +248,7 @@ test('exports complete answer mappings for partial answers and an unanswered shu
   const correct = Object.entries(rerunAnswers)
     .filter(([, text]) => ['2', '4'].includes(text!))
     .map(([label]) => label);
-  expect(unanswered).toMatchObject({ format_version: 2, seed: 42, total_score: 0, total_max: 2, percentage: 0 });
+  expect(unanswered).toMatchObject({ format_version: 3, seed: 42, total_score: 0, total_max: 2, percentage: 0 });
   expect(unanswered.questions[0]).toMatchObject({
     status: 'unanswered',
     score: 0,

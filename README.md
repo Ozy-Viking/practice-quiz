@@ -26,11 +26,11 @@ memory for the current page only.
 
 ## Results JSON
 
-Copy Results JSON and Download Results JSON export the same `format_version: 2` document.
+Copy Results JSON and Download Results JSON export the same `format_version: 3` document.
 It includes the quiz title, source filename, seed, scoring config, question count,
 total score, maximum score, percentage, and an array of completed questions.
 
-Each question includes `id`, `text`, `status`, `score`, `max_score`, and `metadata`,
+Each multiple-choice question includes `id`, `text`, `type: "multiple_choice"`, `status`, `score`, `max_score`, and `metadata`,
 plus the following answer fields:
 
 ```json
@@ -49,3 +49,55 @@ that were not selected; `incorrect` lists selected wrong options. Empty categori
 are `[]`. Rerun exports use the current attempt's order, including after reshuffling.
 Version 2 replaces version 1's `correct_answers`, `selected_answers`,
 `missed_correct_answers`, and `wrong_selected_answers` pairs with these fields.
+
+
+## Mixed questions, marks, and hints
+
+Choose one JSON quiz with the file picker or drop it on **Drop a JSON quiz here, or choose a file**.
+The same validation applies to both paths, regardless of the file's MIME type. Multiple-file
+drops are rejected. A failed upload leaves the existing quiz state intact. When replacing a completed quiz, **Back to Results** returns to the previous attempt and its exports; it is cleared only after a valid replacement loads.
+
+Questions default to `"type": "multiple_choice"`; existing files and camelCase aliases still
+work. MCQs require `correct_answers` (nonempty) and `incorrect_answers` (may be empty).
+Use `"type": "short_answer"` for a multiline, unmarked response. Omit answer arrays or use
+empty arrays on short answers; nonempty options are rejected. Question IDs must be unique.
+
+```json
+{
+  "id": "explain-1",
+  "type": "short_answer",
+  "marks": 2.5,
+  "question": "Explain why this works.",
+  "hints": ["Consider the starting conditions.", "What stays unchanged?"],
+  "metadata": {"topic": "Reasoning"}
+}
+```
+
+Both types accept positive numeric `marks`, including fractions. Available marks resolve in
+this order: question `marks`, top-level `marks_per_question`, `config.marks_per_question`,
+then 1. Zero, negative, null, nonnumeric, and non-finite overrides are invalid. Available
+marks appear on every question and result. MCQ credit and penalties scale by resolved marks.
+Short answers have no awarded score. Mixed-quiz scores and percentages cover MCQs only;
+all-short-answer quizzes show completion and total available marks without a grade.
+
+Both types accept a `hints` array of nonempty plain-text strings. Each numbered button
+independently reveals or hides its hint. Viewing hints does not count as answering and has
+no score penalty. Once viewed, a hint stays in the attempt's history even after hiding it or
+editing an answer. Omitted or empty arrays produce no hint controls or result badges.
+
+Typed responses preserve whitespace, Unicode, and line breaks; whitespace-only answers are
+unanswered. Blank submission is allowed. Reruns, settings transitions, and successful replacement
+uploads clear responses and hint history. Refresh loses in-memory work; export submitted results
+to keep them. There is no autosave or marking workflow for short answers.
+
+Version 3 retains version 2's MCQ label mappings and adds `type`, `hints`, `hints_viewed`, and
+`viewed_hint_indices` to every question. Indices are sorted, unique, zero-based, and refer to
+source hint order. Hintless questions always export `[]`, `false`, and `[]`. Hint definitions
+are exported as study material; usage records only hints actually revealed before submission.
+Short-answer entries include `id`, `text`, `type: "short_answer"`, exact `response`,
+`status: "answered_unmarked"` or `"unanswered_unmarked"`, `max_score`, `metadata`, and hint
+fields. They omit `score` and all option fields. `max_score` always means available marks.
+`question_count` covers all questions; `scored_question_count` counts MCQs. `total_available_marks`
+sums all questions, while `total_score` and `total_max` cover MCQs. `percentage` is null when
+there are no MCQs. Copy and download serialize the same document, including for MCQ-only quizzes.
+Version 2 consumers must accommodate this versioned contract change.

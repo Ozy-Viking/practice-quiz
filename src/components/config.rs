@@ -3,8 +3,8 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    AppPhase, QuizFile, QuizQuestion, ResultsData, SessionQuestion, available_locations,
-    available_topics, build_seeded_session, parse_seed,
+    AppPhase, HintUsage, QuizFile, QuizQuestion, Responses, ResultsData, SessionQuestion,
+    available_locations, available_topics, build_seeded_session, parse_seed,
 };
 
 use super::FilterSection;
@@ -14,7 +14,8 @@ pub fn ConfiguringView(
     mut phase: Signal<AppPhase>,
     mut quiz: Signal<Option<QuizFile>>,
     mut session: Signal<Vec<SessionQuestion>>,
-    mut selections: Signal<HashMap<String, HashSet<String>>>,
+    mut selections: Signal<Responses>,
+    mut hint_usage: Signal<HintUsage>,
     mut question_count: Signal<usize>,
     file_name: Signal<String>,
     load_error: Signal<String>,
@@ -154,7 +155,7 @@ pub fn ConfiguringView(
                     "Negative marking disabled (scores clamped at 0)"
                 }
             }
-            p { class: "mark-value", "Each question is worth {marks_per_question:.1} marks" }
+            p { class: "mark-value", "Default marks per question: {marks_per_question}. Questions can override this default." }
 
             if all_locations.len() >= 2 {
                 FilterSection {
@@ -249,7 +250,7 @@ pub fn ConfiguringView(
                             let Ok(seed) = parse_seed(&seed_input.read()) else { return; };
                             if fq.is_empty() { return; }
                             let count = effective_count;
-                            let sess = build_seeded_session(&fq, count, seed);
+                            let sess = build_seeded_session(&fq, count, seed, config.marks_per_question);
                             seed_input.set(seed.to_string());
                             active_seed.set(seed);
                             results.set(None);
@@ -257,6 +258,7 @@ pub fn ConfiguringView(
                             question_pool.set(fq.clone());
                             session.set(sess);
                             selections.set(HashMap::new());
+                            hint_usage.set(HashMap::new());
                             phase.set(AppPhase::InProgress);
                         }
                     },

@@ -24,7 +24,10 @@
 				"answer": "",
 				"explanation": "",
 				"notes": "The three communities of interest are InfoSec, IT, and general business. The C.I.A. triangle is confidentiality, integrity, and availability. Confidentiality is about authorised access, while integrity is about accuracy and completeness. Availability is for authorised users, not unrestricted access. Accountability is usually supported by logging and auditing."
-			}
+			},
+			"hints": [
+				"Consider the definition before choosing."
+			]
 		},
 		{
 			"id": "MCQ-2",
@@ -45,6 +48,18 @@
 				"answer": "",
 				"explanation": "",
 				"notes": "A WBS breaks project work into smaller, manageable components. The critical path is the longest-duration path that determines project duration."
+			}
+		},
+		{
+			"id": "short-reasoning",
+			"type": "short_answer",
+			"marks": 2.5,
+			"question": "Explain one idea you learned in this quiz.",
+			"hints": [
+				"Use an example to support your explanation."
+			],
+			"metadata": {
+				"topic": "Reflection"
 			}
 		}
 	]

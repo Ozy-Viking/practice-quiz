@@ -1,6 +1,6 @@
-use dioxus::prelude::*;
-
 use crate::model::*;
+use dioxus::html::{FileData, HasFileData};
+use dioxus::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 const SCHEMA_JSON: &str = include_str!("../../assets/quiz-schema.json");
@@ -48,13 +48,13 @@ mod tests {
     #[test]
     fn schema_url_uses_current_url_without_query_or_fragment() {
         assert_eq!(
-            schema_url_from_href("http://127.0.0.1:44947/practice-quiz/?fresh=firefox3#top")
+            schema_url_from_href("http://127.0.0.1:44947/practice-quiz/?fresh=firefox3#top",)
                 .unwrap(),
-            "http://127.0.0.1:44947/practice-quiz/assets/quiz-schema.json"
+            "http://127.0.0.1:44947/practice-quiz/assets/quiz-schema.json",
         );
         assert_eq!(
             schema_url_from_href("http://127.0.0.1:44947/").unwrap(),
-            "http://127.0.0.1:44947/assets/quiz-schema.json"
+            "http://127.0.0.1:44947/assets/quiz-schema.json",
         );
     }
 }
@@ -70,6 +70,41 @@ fn copy_to_clipboard(text: String, mut copied: Signal<bool>) {
         let _ = text;
         copied.set(true);
     });
+}
+
+async fn read_quiz_file(file: &FileData) -> Result<String, String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use dioxus::web::WebFileExt;
+        let file = file.get_web_file().ok_or("Browser file unavailable")?;
+        wasm_bindgen_futures::JsFuture::from(file.text())
+            .await
+            .map_err(|error| format!("{error:?}"))?
+            .as_string()
+            .ok_or_else(|| "File did not contain text".into())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        file.read_string().await.map_err(|error| error.to_string())
+    }
+}
+
+fn is_file_drag(event: &DragEvent) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        event
+            .downcast::<web_sys::DragEvent>()
+            .and_then(|event| event.data_transfer())
+            .is_some_and(|data| {
+                data.types()
+                    .iter()
+                    .any(|kind| kind.as_string().as_deref() == Some("Files"))
+            })
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        !event.files().is_empty()
+    }
 }
 
 struct FieldRow {
@@ -129,7 +164,8 @@ pub fn UploadView(
     mut file_name: Signal<String>,
     mut load_error: Signal<String>,
     mut session: Signal<Vec<SessionQuestion>>,
-    mut selections: Signal<HashMap<String, HashSet<String>>>,
+    mut selections: Signal<Responses>,
+    mut hint_usage: Signal<HintUsage>,
     mut results: Signal<Option<ResultsData>>,
     mut question_pool: Signal<Vec<QuizQuestion>>,
     mut selected_topics: Signal<HashSet<String>>,
@@ -139,6 +175,9 @@ pub fn UploadView(
     mut seed_input: Signal<String>,
     mut active_seed: Signal<u32>,
 ) -> Element {
+    let mut dragging = use_signal(|| false);
+    let mut drag_depth = use_signal(|| 0usize);
+    let mut upload_generation = use_signal(|| 0u64);
     let mut show_format = use_signal(|| false);
     let example_copied = use_signal(|| false);
     let schema_copied = use_signal(|| false);
@@ -151,69 +190,137 @@ pub fn UploadView(
 
     let top_fields = fields_from_props(&schema["properties"], &["questions"]);
     let config_fields = fields_from_props(&schema["definitions"]["QuizConfig"]["properties"], &[]);
-    // correct_answers + incorrect_answers are required via oneOf in the schema
+    // Option arrays are required only for multiple-choice questions.
     let question_fields = fields_from_props(
         &schema["definitions"]["QuizQuestion"]["properties"],
-        &["id", "question", "correct_answers", "incorrect_answers"],
+        &["id", "question"],
     );
     let metadata_fields = fields_from_props(
         &schema["definitions"]["QuestionMetadata"]["properties"],
         &[],
     );
-
+    let mut upload = move |files: Vec<FileData>| {
+        if files.is_empty() {
+            return;
+        }
+        dragging.set(false);
+        drag_depth.set(0);
+        let generation = *upload_generation.peek() + 1;
+        upload_generation.set(generation);
+        if files.len() != 1 {
+            load_error.set("Choose or drop exactly one quiz file at a time.".into());
+            return;
+        }
+        let file = match files.into_iter().next() {
+            Some(f) => f,
+            None => return,
+        };
+        let name = file.name();
+        spawn(async move {
+            let read = read_quiz_file(&file).await;
+            if generation != *upload_generation.peek() {
+                return;
+            }
+            let text = match read {
+                Ok(t) => t,
+                Err(e) => {
+                    load_error.set(format!("Failed to read file: {e}"));
+                    return;
+                }
+            };
+            let parsed: Result<QuizFile, _> = serde_json::from_str(&text);
+            match parsed {
+                Ok(q) => match validate_quiz(&q) {
+                    Ok(()) => {
+                        session.set(Vec::new());
+                        selections.set(HashMap::new());
+                        hint_usage.set(HashMap::new());
+                        results.set(None);
+                        question_pool.set(Vec::new());
+                        selected_topics.set(available_topics(&q).into_iter().collect());
+                        selected_locations.set(available_locations(&q).into_iter().collect());
+                        topic_regex_input.set(String::new());
+                        location_regex_input.set(String::new());
+                        seed_input.set(rand::random::<u32>().to_string());
+                        active_seed.set(0);
+                        question_count.set(initial_question_count(&q));
+                        file_name.set(name);
+                        quiz.set(Some(q));
+                        phase.set(AppPhase::Configuring);
+                        load_error.set(String::new());
+                    }
+                    Err(msg) => load_error.set(msg),
+                },
+                Err(e) => load_error.set(format!("Invalid JSON: {e}")),
+            }
+        });
+    };
     rsx! {
         div { class: "card upload-card",
             h2 { "Load Quiz File" }
             p { class: "hint", "Upload a JSON file containing your quiz questions." }
-            input {
-                r#type: "file",
-                accept: ".json,application/json",
-                onchange: move |evt: FormEvent| {
-                    let files = evt.files();
-                    let file = match files.into_iter().next() {
-                        Some(f) => f,
-                        None => return,
-                    };
-                    let name = file.name();
-                    spawn(async move {
-                        let text = match file.read_string().await {
-                            Ok(t) => t,
-                            Err(e) => {
-                                load_error.set(format!("Failed to read file: {e}"));
-                                return;
-                            }
-                        };
-                        let parsed: Result<QuizFile, _> = serde_json::from_str(&text);
-                        match parsed {
-                            Ok(q) => {
-                                match validate_quiz(&q) {
-                                    Ok(()) => {
-                                        session.set(Vec::new());
-                                        selections.set(HashMap::new());
-                                        results.set(None);
-                                        question_pool.set(Vec::new());
-                                        selected_topics.set(available_topics(&q).into_iter().collect());
-                                        selected_locations.set(available_locations(&q).into_iter().collect());
-                                        topic_regex_input.set(String::new());
-                                        location_regex_input.set(String::new());
-                                        seed_input.set(rand::random::<u32>().to_string());
-                                        active_seed.set(0);
-                                        question_count.set(initial_question_count(&q));
-                                        file_name.set(name);
-                                        quiz.set(Some(q));
-                                        phase.set(AppPhase::Configuring);
-                                        load_error.set(String::new());
-                                    }
-                                    Err(msg) => load_error.set(msg),
-                                }
-                            }
-                            Err(e) => load_error.set(format!("Invalid JSON: {e}")),
-                        }
-                    });
+            div {
+                class: if dragging() { "upload-drop-target dragging" } else { "upload-drop-target" },
+                ondragenter: move |event: DragEvent| {
+                    if is_file_drag(&event) {
+                        event.prevent_default();
+                        drag_depth += 1;
+                        dragging.set(true);
+                    }
                 },
+                ondragover: move |event: DragEvent| {
+                    if is_file_drag(&event) {
+                        event.prevent_default();
+                        event.data_transfer().set_drop_effect("copy");
+                    }
+                },
+                ondragleave: move |_| {
+                    let next = drag_depth.peek().saturating_sub(1);
+                    drag_depth.set(next);
+                    if next == 0 {
+                        dragging.set(false);
+                    }
+                },
+                ondrop: move |event: DragEvent| {
+                    dragging.set(false);
+                    drag_depth.set(0);
+                    if is_file_drag(&event) {
+                        event.prevent_default();
+                        let files = event.files();
+                        if files.is_empty() {
+                            upload_generation += 1;
+                            load_error
+                                .set(
+                                    "Could not read the dropped file. Choose a JSON file instead."
+                                        .into(),
+                                );
+                        } else {
+                            upload(files);
+                        }
+                    }
+                },
+                label { r#for: "quiz-file", "Drop a JSON quiz here, or choose a file" }
+                input {
+                    id: "quiz-file",
+                    r#type: "file",
+                    accept: ".json,application/json",
+                    onchange: move |event: FormEvent| upload(event.files()),
+                }
             }
             if !load_error.read().is_empty() {
                 div { class: "error-banner", {load_error.read().clone()} }
+            }
+            if results.read().is_some() {
+                button {
+                    class: "btn btn-secondary",
+                    r#type: "button",
+                    onclick: move |_| {
+                        upload_generation += 1;
+                        load_error.set(String::new());
+                        phase.set(AppPhase::Submitted);
+                    },
+                    "← Back to Results"
+                }
             }
 
             div { class: "format-reference",
@@ -275,7 +382,8 @@ pub fn UploadView(
 
                         div { class: "field-ref",
                             {field_ref_section("Top-level", &top_fields)}
-                            {field_ref_section("config", &config_fields)}
+                            { field_ref_section("config", &
+                                    config_fields) }
                             {field_ref_section("questions[ ]", &question_fields)}
                             {field_ref_section("metadata", &metadata_fields)}
                         }
