@@ -275,3 +275,17 @@ for (const [name, error] of [
     await decoded(page);
   });
 }
+
+test('rejects decoded duplicate names and reads unambiguous CP437 names', async ({ page }) => {
+  await upload(page, 'duplicate-decoded.zip');
+  await expect(page.locator('.error-banner')).toContainText('duplicate decoded name');
+  expect(await page.evaluate(() => (window as any).created)).toEqual([]);
+  await upload(page, 'cp437.zip');
+  await start(page);
+  await expect(page.locator('.image-enlarge img')).toHaveCount(1);
+  await expect.poll(() => page.locator('.image-enlarge img').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(320);
+  await submit(page);
+  const json = await exported(page);
+  expect(json.source_manifest).toBe('é.json');
+  expect(json.questions[0].images[0].src).toBe('é.png');
+});

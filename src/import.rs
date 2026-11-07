@@ -58,38 +58,9 @@ pub enum ImportSource {
 }
 
 pub struct Archive {
-    zip: zip::ZipArchive<Cursor<Rc<[u8]>>>,
+    bytes: Vec<u8>,
+    entries: HashMap<String, zip::read::OwnedZipFileEntry>,
     pub candidates: Vec<String>,
-}
-
-// Cap directory allocation before handing untrusted entry counts to the ZIP parser.
-fn check_entry_count(bytes: &[u8]) -> Result<(), String> {
-    let end = (bytes.len().saturating_sub(65_557)..bytes.len().saturating_sub(21))
-        .rev()
-        .find(|&i| {
-            bytes.get(i..i + 4) == Some(b"PK\x05\x06")
-                && i + 22 + u16::from_le_bytes([bytes[i + 20], bytes[i + 21]]) as usize
-                    == bytes.len()
-        })
-        .ok_or("Invalid ZIP end record")?;
-    let count = u16::from_le_bytes([bytes[end + 10], bytes[end + 11]]) as u64;
-    let count = if end >= 20 && bytes.get(end - 20..end - 16) == Some(b"PK\x06\x07") {
-        let offset = u64::from_le_bytes(bytes[end - 12..end - 4].try_into().unwrap());
-        let offset = usize::try_from(offset).map_err(|_| "Invalid ZIP64 directory")?;
-        let record = bytes
-            .get(offset..offset.saturating_add(56))
-            .ok_or("Invalid ZIP64 directory")?;
-        if &record[..4] != b"PK\x06\x06" {
-            return Err("Invalid ZIP64 directory".into());
-        }
-        u64::from_le_bytes(record[32..40].try_into().unwrap())
-    } else {
-        count
-    };
-    if count > ENTRY_LIMIT as u64 {
-        return Err("ZIP exceeds 1,000 entries".into());
-    }
-    Ok(())
 }
 
 impl Archive {
@@ -97,20 +68,29 @@ impl Archive {
         if bytes.len() > ZIP_LIMIT {
             return Err("ZIP exceeds 50 MiB".into());
         }
-        check_entry_count(&bytes)?;
-        let zip = zip::ZipArchive::new(Cursor::new(Rc::<[u8]>::from(bytes)))
-            .map_err(|e| format!("Invalid ZIP: {e}"))?;
+        // This pinned API discovers the directory without allocating its index.
+        // Use the same parsed entries for validation and reads, so an alternate
+        // footer cannot switch directories after the entry-count check.
+        let mut zip = zip::unstable::read::ZipIterable::try_new(
+            Cursor::new(bytes.as_slice()),
+            zip::read::Config::default(),
+        )
+        .map_err(|e| format!("Invalid ZIP: {e}"))?;
         if zip.len() > ENTRY_LIMIT {
             return Err("ZIP exceeds 1,000 entries".into());
         }
-        if zip.has_duplicate_names() {
-            return Err("ZIP contains duplicate names".into());
-        }
         let mut total = 0u64;
         let mut candidates = Vec::new();
-        for i in 0..zip.len() {
-            let entry = zip.by_index_data(i).map_err(|e| e.to_string())?;
-            let name = entry.name().map_err(|e| e.to_string())?;
+        let mut entries = HashMap::new();
+        for entry in zip.files().map_err(|e| format!("Invalid ZIP: {e}"))? {
+            let entry = entry.map_err(|e| format!("Invalid ZIP entry: {e}"))?;
+            if entries.len() >= ENTRY_LIMIT {
+                return Err("ZIP exceeds 1,000 entries".into());
+            }
+            let name = entry.name().map_err(|e| e.to_string())?.into_owned();
+            if entries.contains_key(&name) {
+                return Err(format!("ZIP contains duplicate decoded name: {name}"));
+            }
             local_path(if entry.is_dir() {
                 name.strip_suffix('/').unwrap_or(&name)
             } else {
@@ -136,23 +116,32 @@ impl Archive {
                 && !name.contains('/')
                 && name.to_ascii_lowercase().ends_with(".json")
             {
-                candidates.push(name.into_owned());
+                candidates.push(name.clone());
             }
+            entries.insert(name, entry.into());
         }
         candidates.sort();
         if candidates.is_empty() {
             return Err("Place at least one quiz JSON file at the ZIP root.".into());
         }
-        Ok(Self { zip, candidates })
+        Ok(Self {
+            bytes,
+            entries,
+            candidates,
+        })
     }
 
     fn read(&self, name: &str, limit: usize) -> Result<Vec<u8>, String> {
         if ignored(name) {
             return Err(format!("Metadata is not an image: {name}"));
         }
-        let mut zip = self.zip.clone();
-        let entry = zip
-            .by_name(name)
+        let mut reader = Cursor::new(self.bytes.as_slice());
+        let entry = self
+            .entries
+            .get(name)
+            .ok_or_else(|| format!("Cannot read {name}: file not found"))?
+            .as_ref()
+            .with_reader(&mut reader, zip::ZipReadOptions::default())
             .map_err(|e| format!("Cannot read {name}: {e}"))?;
         if entry.is_dir() || entry.size() > limit as u64 {
             return Err(format!(
@@ -628,12 +617,56 @@ mod tests {
         let mut bytes = zip(&[("quiz.json", MANIFEST)]);
         let end = bytes.len() - 22;
         bytes[end + 10..end + 12].copy_from_slice(&1001u16.to_le_bytes());
-        assert!(Archive::new(bytes).err().unwrap().contains("1,000"));
+        // An impossible declared count is rejected by the directory parser.
+        assert!(Archive::new(bytes).is_err());
         let mut bytes = zip(&[("quiz.json", MANIFEST)]);
         let central = bytes.windows(4).position(|b| b == b"PK\x01\x02").unwrap();
         bytes[central + 24..central + 28].copy_from_slice(&(TOTAL_LIMIT as u32 + 1).to_le_bytes());
         assert!(Archive::new(bytes).err().unwrap().contains("100 MiB"));
     }
+    #[test]
+    fn decoded_names_are_unique_and_used_for_exact_reads() {
+        let source = include_bytes!("../tests/fixtures/images/duplicate-decoded.zip");
+        assert!(
+            Archive::new(source.to_vec())
+                .err()
+                .unwrap()
+                .contains("duplicate decoded")
+        );
+        let source = include_bytes!("../tests/fixtures/images/cp437.zip");
+        let archive = Archive::new(source.to_vec()).unwrap();
+        assert_eq!(archive.candidates, ["é.json"]);
+        let (quiz, assets) =
+            load_now(ImportSource::Archive(Rc::new(archive)), Some("é.json")).unwrap();
+        assert_eq!(quiz.title, "CP437 quiz");
+        assert!(assets.urls.contains_key("é.png"));
+    }
+
+    #[test]
+    fn directory_limit_cannot_be_hidden_by_a_fake_footer_in_the_comment() {
+        let names: Vec<_> = (0..=ENTRY_LIMIT).map(|i| format!("{i}.json")).collect();
+        let entries: Vec<_> = names
+            .iter()
+            .map(|name| (name.as_str(), b"{}".as_slice()))
+            .collect();
+        let mut bytes = zip(&entries);
+        assert!(Archive::new(bytes.clone()).err().unwrap().contains("1,000"));
+        let end = bytes.len() - 22;
+        bytes[end + 20..end + 22].copy_from_slice(&22u16.to_le_bytes());
+        let mut fake = [0u8; 22];
+        fake[..4].copy_from_slice(b"PK\x05\x06");
+        fake[8..10].copy_from_slice(&1u16.to_le_bytes());
+        fake[10..12].copy_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&fake);
+        assert!(Archive::new(bytes).is_err());
+        // A harmless comment remains accepted.
+        let mut bytes = zip(&[("quiz.json", MANIFEST)]);
+        let end = bytes.len() - 22;
+        bytes[end + 20..end + 22].copy_from_slice(&4u16.to_le_bytes());
+        bytes.extend_from_slice(b"note");
+        assert!(Archive::new(bytes).is_ok());
+    }
+
     #[test]
     fn rejects_duplicate_encrypted_symlink_and_unsupported_compression() {
         let bytes = zip(&[("one.json", MANIFEST), ("two.json", MANIFEST)]);
