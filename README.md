@@ -80,10 +80,11 @@ marks appear on every question and result. MCQ credit and penalties scale by res
 Short answers have no awarded score. Mixed-quiz scores and percentages cover MCQs only;
 all-short-answer quizzes show completion and total available marks without a grade.
 
-Both types accept a `hints` array of nonempty plain-text strings. Each numbered button
-independently reveals or hides its hint. Viewing hints does not count as answering and has
-no score penalty. Once viewed, a hint stays in the attempt's history even after hiding it or
-editing an answer. Omitted or empty arrays produce no hint controls or result badges.
+Both types accept a `hints` array of nonempty plain-text strings. One “Show next hint” button
+reveals hints in source order, one per activation. Revealed hints stay visible in separate
+blocks with source line breaks preserved; the button disappears after the last hint. Viewing
+hints does not count as answering and has no score penalty. Once viewed, a hint stays in the
+attempt's history even after editing an answer. Omitted or empty arrays produce no hint controls or result badges.
 
 Typed responses preserve whitespace, Unicode, and line breaks; whitespace-only answers are
 unanswered. Blank submission is allowed. Reruns, settings transitions, and successful replacement

@@ -92,44 +92,83 @@ test('mixed responses preserve exact Unicode, whitespace, literal markup, marks,
   for (const key of ['score', 'answers', 'correct', 'selected', 'missed', 'incorrect']) expect(answer).not.toHaveProperty(key);
 });
 
-test('both question types reveal independent hints on pointer and keyboard activation and retain actual history', async ({ page }) => {
+test('both question types reveal hints sequentially by keyboard and pointer and retain actual history', async ({ page }) => {
   await start(page);
   const mc = question(page, 'Pick the right option');
   const sa = question(page, 'Explain your reasoning');
-  for (const block of [mc, sa]) {
-    await expect(block.locator('.hint-text').nth(0)).toBeHidden();
-    await expect(block.locator('.hint-text').nth(1)).toBeHidden();
-    const first = block.getByRole('button', { name: 'Show hint 1' });
-    await expect(first).toHaveAttribute('aria-expanded', 'false');
-    const target = await first.getAttribute('aria-controls');
-    await first.focus();
+  await expect(question(page, 'Optional response').locator('.question-hint, .hint-toggle, .hint-text')).toHaveCount(0);
+  for (const [block, prefix, literal] of [[mc, 'MC', '<b>literal</b>'], [sa, 'SA', '<script>literal</script>']] as const) {
+    await expect(block.locator('.hint-text')).toHaveCount(0);
+    const next = block.getByRole('button', { name: 'Show next hint', exact: true });
+    await expect(next).toHaveCount(1);
+    const target = await next.getAttribute('aria-controls');
+    await next.focus();
     await page.keyboard.press('Enter');
     await expect(page.locator(`[id="${target}"]`)).toBeVisible();
-    await expect(block.getByRole('button', { name: 'Hide hint 1' })).toHaveAttribute('aria-expanded', 'true');
-    await expect(block.locator('.hint-text').nth(1)).toBeHidden();
-    await block.getByRole('button', { name: 'Hide hint 1' }).click();
-    await expect(block.locator('.hint-text').nth(0)).toBeHidden();
+    await expect(block.locator('.hint-text')).toHaveCount(1);
+    await expect(block.locator('.hint-text')).toHaveText(`${prefix} first ${literal}`);
+    if (prefix === 'MC') {
+      await next.click();
+    } else {
+      await next.focus();
+      await page.keyboard.press('Space');
+    }
+    await expect(block.locator('.hint-text')).toHaveText([`${prefix} first ${literal}`, `${prefix} second\nline`]);
+    expect(await block.locator('.hint-text').nth(1).textContent()).toBe(`${prefix} second\nline`);
+    await expect(block.locator('.hint-text').nth(1)).toHaveCSS('white-space', 'pre-wrap');
+    await expect(block.locator('.hint-text').nth(0)).toBeVisible();
+    await expect(block.locator('.hint-text').nth(1)).toBeVisible();
+    await expect(next).toHaveCount(0);
+    await expect(block.locator('.hint-text b, .hint-text script')).toHaveCount(0);
   }
   await expect(page.getByText('0/3 answered')).toBeVisible();
-  await sa.getByRole('button', { name: 'Show hint 2' }).click();
   await sa.getByRole('textbox').fill('Edit this');
   await sa.getByRole('textbox').fill('');
   await mc.getByRole('button', { name: /Right/ }).click();
   await mc.getByRole('button', { name: /Right/ }).click();
   await expect(page.getByText('0/3 answered')).toBeVisible();
-  await expect(sa.locator('.hint-text').nth(1)).toHaveText('SA second\nline');
-  await sa.getByRole('button', { name: 'Show hint 1' }).click();
-  await expect(sa.locator('.hint-text').nth(0)).toHaveText('SA first <script>literal</script>');
-  await expect(sa.locator('.hint-text script')).toHaveCount(0);
+  await expect(page.locator('.hint-text')).toHaveCount(4);
   await submit(page);
-  await expect(result(page, 'Pick the right option').locator('.hint-usage')).toHaveText('Hints viewed: 1 of 2');
-  await expect(result(page, 'Explain your reasoning').locator('.hint-usage')).toHaveText('Hints viewed: 2 of 2');
-  await expect(page.getByRole('button', { name: /Show hint|Hide hint/ })).toHaveCount(0);
+  for (const text of ['Pick the right option', 'Explain your reasoning']) {
+    await expect(result(page, text).locator('.hint-usage')).toHaveText('Hints viewed: 2 of 2');
+  }
+  await expect(page.getByRole('button', { name: 'Show next hint' })).toHaveCount(0);
   const json = await exports(page);
   expect(json.total_score).toBe(0);
-  expect(json.questions.find((q: any) => q.id === 'mc')).toMatchObject({ hints_viewed: true, viewed_hint_indices: [0], status: 'unanswered' });
+  expect(json.questions.find((q: any) => q.id === 'mc')).toMatchObject({ hints_viewed: true, viewed_hint_indices: [0, 1], status: 'unanswered' });
   expect(json.questions.find((q: any) => q.id === 'sa')).toMatchObject({ hints_viewed: true, viewed_hint_indices: [0, 1], status: 'unanswered_unmarked' });
   expect(await exports(page)).toEqual(json);
+});
+
+test('one reveal records only the first hint for both types', async ({ page }) => {
+  await start(page);
+  for (const text of ['Pick the right option', 'Explain your reasoning']) {
+    const block = question(page, text);
+    await block.getByRole('button', { name: 'Show next hint' }).click();
+    await expect(block.locator('.hint-text')).toHaveCount(1);
+  }
+  await submit(page);
+  for (const q of (await exports(page)).questions.filter((q: any) => q.id !== 'blank')) {
+    expect(q).toMatchObject({ hints_viewed: true, viewed_hint_indices: [0] });
+  }
+});
+
+test('rapid activations use current usage even before rerender for both types', async ({ page }) => {
+  await start(page);
+  for (const text of ['Pick the right option', 'Explain your reasoning']) {
+    const block = question(page, text);
+    await block.getByRole('button', { name: 'Show next hint' }).evaluate((button: HTMLButtonElement) => {
+      button.click();
+      button.click();
+      button.click(); // A stale terminal activation must not record an invalid index.
+    });
+    await expect(block.locator('.hint-text')).toHaveCount(2);
+    await expect(block.getByRole('button', { name: 'Show next hint' })).toHaveCount(0);
+  }
+  await submit(page);
+  for (const q of (await exports(page)).questions.filter((q: any) => q.id !== 'blank')) {
+    expect(q).toMatchObject({ hints_viewed: true, viewed_hint_indices: [0, 1] });
+  }
 });
 
 for (const explicitEmpty of [false, true]) {
@@ -165,13 +204,17 @@ for (const shuffle of [false, true]) {
     await start(page);
     await question(page, 'Explain your reasoning').getByRole('textbox').fill('Old response');
     await question(page, 'Pick the right option').getByRole('button', { name: /Right/ }).click();
-    for (const text of ['Explain your reasoning', 'Pick the right option']) await question(page, text).getByRole('button', { name: 'Show hint 2' }).click();
+    for (const text of ['Explain your reasoning', 'Pick the right option']) {
+      const next = question(page, text).getByRole('button', { name: 'Show next hint' });
+      await next.click();
+      await next.click();
+    }
     await submit(page);
     await page.getByRole('checkbox', { name: 'Keep question and answer order' }).setChecked(!shuffle);
     await page.getByRole('button', { name: 'Rerun same questions' }).click();
     await expect(page.getByText('0/3 answered')).toBeVisible();
     await expect(question(page, 'Explain your reasoning').getByRole('textbox')).toHaveValue('');
-    await expect(page.getByRole('button', { name: /Hide hint/ })).toHaveCount(0);
+    await expect(page.locator('.hint-text')).toHaveCount(0);
     await submit(page);
     const json = await exports(page);
     expect(json.total_available_marks).toBe(8.75);
@@ -182,15 +225,15 @@ for (const shuffle of [false, true]) {
 test('settings and replacement uploads clear typed responses and usage; mixed questions filter normally', async ({ page }) => {
   await start(page);
   await question(page, 'Explain your reasoning').getByRole('textbox').fill('Discard');
-  await question(page, 'Explain your reasoning').getByRole('button', { name: 'Show hint 1' }).click();
+  await question(page, 'Explain your reasoning').getByRole('button', { name: 'Show next hint' }).click();
   await page.getByRole('button', { name: /Back to Settings/ }).click();
   await page.getByPlaceholder('regex (e.g. Chapter [1-3])').fill('Reasoning');
   await page.getByRole('button', { name: /Start Quiz/ }).click();
   await expect(page.locator('.question-block')).toHaveCount(1);
   await expect(page.getByRole('textbox')).toHaveValue('');
-  await expect(page.getByRole('button', { name: /Hide hint/ })).toHaveCount(0);
+  await expect(page.locator('.hint-text')).toHaveCount(0);
   await page.getByRole('textbox').fill('Another response');
-  await page.getByRole('button', { name: 'Show hint 1' }).click();
+  await page.getByRole('button', { name: 'Show next hint' }).click();
   await submit(page);
   await page.getByRole('button', { name: /Load New Quiz/ }).click();
   await drop(page, [{ name: 'replacement.json', text: JSON.stringify(mixed) }]);
@@ -289,7 +332,8 @@ test('mixed text and hint history survive export failures and retry', async ({ p
   const sa = question(page, 'Explain your reasoning');
   const raw = '  Keep this\n日本語 <b>literal</b>  ';
   await sa.getByRole('textbox').fill(raw);
-  await sa.getByRole('button', { name: 'Show hint 2' }).click();
+  await sa.getByRole('button', { name: 'Show next hint' }).click();
+  await sa.getByRole('button', { name: 'Show next hint' }).click();
   await submit(page);
   await page.evaluate(() => {
     const write = navigator.clipboard.writeText.bind(navigator.clipboard);
@@ -310,7 +354,7 @@ test('mixed text and hint history survive export failures and retry', async ({ p
   await page.getByRole('button', { name: 'Download Results JSON' }).click();
   await expect(page.locator('.results-export [role=status]')).toContainText('Could not start the download.');
   const json = await exports(page);
-  expect(json.questions.find((q: any) => q.id === 'sa')).toMatchObject({ response: raw, hints_viewed: true, viewed_hint_indices: [1] });
+  expect(json.questions.find((q: any) => q.id === 'sa')).toMatchObject({ response: raw, hints_viewed: true, viewed_hint_indices: [0, 1] });
 });
 
 for (const method of ['picker', 'drop'] as const) {
@@ -319,7 +363,8 @@ for (const method of ['picker', 'drop'] as const) {
     const raw = '  Preserve this\n日本語 <b>literal</b>  ';
     const sa = question(page, 'Explain your reasoning');
     await sa.getByRole('textbox').fill(raw);
-    await sa.getByRole('button', { name: 'Show hint 2' }).click();
+    await sa.getByRole('button', { name: 'Show next hint' }).click();
+    await sa.getByRole('button', { name: 'Show next hint' }).click();
     await question(page, 'Pick the right option').getByRole('button', { name: /Right/ }).click();
     await submit(page);
     const original = await exports(page);

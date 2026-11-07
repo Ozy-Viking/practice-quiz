@@ -15,7 +15,6 @@ pub fn QuizView(
     mut results: Signal<Option<ResultsData>>,
     active_seed: Signal<u32>,
 ) -> Element {
-    let mut expanded: Signal<HintUsage> = use_signal(HashMap::new);
     let sess = session.read();
     let config = quiz
         .read()
@@ -116,47 +115,40 @@ pub fn QuizView(
                                     }
                                 }
                             }
-                            for (hint_index, hint) in sq.hints.iter().enumerate() {
+                            if !sq.hints.is_empty() {
                                 {
                                     let hint_qid = qid.clone();
-                                    let is_expanded = expanded
-                                        .read()
-                                        .get(&qid)
-                                        .is_some_and(|indices| indices.contains(&hint_index));
+                                    let usage = hint_usage.read();
+                                    let viewed = usage.get(&qid);
+                                    let has_next = (0..sq.hints.len())
+                                        .any(|index| !viewed.is_some_and(|indices| indices.contains(&index)));
                                     rsx! {
                                         div { class: "question-hint",
-                                            button {
-                                                r#type: "button",
-                                                class: "btn btn-secondary hint-toggle",
-                                                aria_expanded: "{is_expanded}",
-                                                aria_controls: "hint-{idx}-{hint_index}",
-                                                onclick: move |_| {
-                                                    if is_expanded {
-                                                        if let Some(indices) = expanded.write().get_mut(&hint_qid) {
-                                                            indices.remove(&hint_index);
-                                                        }
-                                                    } else {
-                                                        expanded.write().entry(hint_qid.clone()).or_default().insert(hint_index);
-                                                        record_hint_view(
-                                                            &session.read(),
-                                                            &mut hint_usage.write(),
-                                                            &hint_qid,
-                                                            hint_index,
-                                                        );
+                                            div { id: "hints-{idx}", aria_live: "polite",
+                                                for (hint_index, hint) in sq.hints.iter().enumerate() {
+                                                    if viewed.is_some_and(|indices| indices.contains(&hint_index)) {
+                                                        p { class: "hint-text", "{hint}" }
                                                     }
-                                                },
-                                                if is_expanded {
-                                                    "Hide hint {hint_index + 1}"
-                                                } else {
-                                                    "Show hint {hint_index + 1}"
                                                 }
                                             }
-                                            p {
-                                                id: "hint-{idx}-{hint_index}",
-                                                class: "hint-text",
-                                                hidden: !is_expanded,
-                                                if is_expanded {
-                                                    "{hint}"
+                                            if has_next {
+                                                button {
+                                                    r#type: "button",
+                                                    class: "btn btn-secondary hint-toggle",
+                                                    aria_controls: "hints-{idx}",
+                                                    onclick: move |_| {
+                                                        let session = session.read();
+                                                        let mut usage = hint_usage.write();
+                                                        if let Some(question) = session.iter().find(|q| q.id == hint_qid) {
+                                                            let next = (0..question.hints.len()).find(|index| {
+                                                                !usage.get(&hint_qid).is_some_and(|indices| indices.contains(index))
+                                                            });
+                                                            if let Some(index) = next {
+                                                                record_hint_view(&session, &mut usage, &hint_qid, index);
+                                                            }
+                                                        }
+                                                    },
+                                                    "Show next hint"
                                                 }
                                             }
                                         }
