@@ -149,6 +149,10 @@ test('remote HTTPS images use no referrer, show failures with retry, and fit nar
   fail = false;
   for (let i = 0; i < 3; i++) await page.getByRole('button', { name: 'Retry image' }).first().click();
   await decoded(page);
+  await page.getByRole('button', { name: /Enlarge image:/ }).first().click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect.poll(() => page.getByRole('dialog').locator('img').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(320);
+  await page.getByRole('button', { name: 'Close image' }).click();
   await page.setViewportSize({ width: 375, height: 812 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await submit(page);
@@ -255,3 +259,19 @@ test('Cancel selection releases a pending decoder without waiting or leaving upl
   await expect(page.getByRole('region', { name: 'Choose a quiz' })).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).revoked.includes((window as any).created[0]))).toBe(true);
 });
+
+for (const [name, error] of [
+  ['oversized-frame.gif.zip', '20 megapixels'],
+  ['oversized-header.png.zip', '20 megapixels'],
+  ['oversized-metadata.png.zip', 'metadata exceeds 8 MiB'],
+]) {
+  test(`rejects ${name} before creating browser image resources`, async ({ page }) => {
+    await upload(page, name);
+    await expect(page.locator('.error-banner')).toContainText(error);
+    expect(await page.evaluate(() => (window as any).created)).toEqual([]);
+    await expect(page.getByRole('heading', { name: 'Load Quiz File' })).toBeVisible();
+    await upload(page);
+    await start(page);
+    await decoded(page);
+  });
+}

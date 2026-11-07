@@ -1,6 +1,6 @@
 # Image feature implementation and verification
 
-Implemented locally on `quiz-image-import`, 2026-11-07. Independent review is pending.
+Implemented locally on `quiz-image-import`, 2026-11-07. Independent review completed; all three reported defects have been fixed and regression-tested locally.
 
 ## Integration
 
@@ -52,3 +52,22 @@ Earlier runs that reused an unrelated server on port 8081 or overlapped Dioxus b
 ## Remaining verification limits
 
 WebKit still needs its host dependencies before its tests can run. No physical phone performance measurement or representative teaching dataset was available: the documented limits are the agreed initial limits, exercised with local synthetic fixtures. Archive decompression remains bounded synchronous WASM work; image decoding is sequential and asynchronous. Large real quizzes and animated-image memory behavior deserve measurement on target phones before release. Remote image availability remains dependent on the host; test HTTPS requests are fulfilled locally rather than contacting external image services.
+
+## Independent review fixes
+
+The reviewer reproduced three defects against `cd2e9e9`: GIF frame dimensions could exceed a forged small logical screen, PNG decoder construction expanded compressed ICC metadata before the pixel check, and a recovered remote inline image left its enlargement broken.
+
+- GIF preflight now scans all frame descriptors and offsets, global/local color tables, and extension/data blocks without LZW decoding. Both individual frame dimensions and the maximum canvas extents must fit the 20-megapixel limit.
+- PNG preflight reads IHDR directly before any decoder construction. It scans compressed ICC/text metadata throughout the file (including after IDAT), streaming decompressed bytes to a sink with an aggregate 8-MiB cap. This explicit validation is necessary because the PNG dependency ignores ICC parsing failures. Decoder construction additionally has an explicit 8-MiB allocation limit. `flate2` 1.1.11 was already locked transitively; it is now a direct dependency with the existing pure-Rust `zlib-rs` backend. No resolved package versions changed. Its declared Rust minimum is 1.67.
+- Failed images now unmount the enlargement dialog as well as the inline image; retry recreates both. The browser regression opens the dialog after a 404-to-success retry and checks its decoded natural width.
+
+New deterministic fixtures reproduce a 5000×5000 GIF frame behind a 1×1 logical screen, oversized PNG IHDR with compressed metadata, and ordinary-sized PNG with a 9-MiB expanded ICC profile. Generate them with `tests/fixtures/images/generate-regressions.py`. Native tests also check later GIF frames/offsets and PNG metadata after IDAT. Browser tests require rejection before any image Blob is created, then verify a valid upload still works.
+
+Final validation after fixes:
+
+- `cargo test --locked`: **54 passed**, 0 failed.
+- `cargo fmt --check` and `git diff --check`: passed.
+- `QUIZ_TEST_PORT=8097 npx playwright test --project=chromium --project=firefox --reporter=line`: **108 passed**, 0 failed, 35.4 s, using a freshly built WASM app through the configured `dx serve` command.
+- An initial attempted dialog-key fix failed the new retry regression in both browsers; it was replaced by conditional unmount/remount before the successful final run.
+
+The original WebKit/system-library and physical-device/dataset verification limitations remain. No second independent review was run after these focused fixes. Nothing has been pushed.
