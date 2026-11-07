@@ -27,6 +27,15 @@ class SchemaTests(unittest.TestCase):
                 quiz = {'questions': [{'id': 'q', 'question': 'Q', 'type': 'short_answer', 'hints': [hint]}]}
                 self.assertEqual(self.validator.is_valid(quiz), accepted)
 
+    def test_image_whitespace(self):
+        for field in ['alt', 'src']:
+            for text, accepted in [('', False), ('\u0085', False), ('\ufeff', True), ('\u200b', True), (' text ', True)]:
+                with self.subTest(field=field, text=repr(text)):
+                    image = {'src': 'photo.png', 'alt': 'Photo'}
+                    image[field] = text
+                    quiz = {'questions': [{'id':'q', 'question':'Q', 'type':'short_answer', 'images':[image]}]}
+                    self.assertEqual(self.validator.is_valid(quiz), accepted)
+
     def test_option_aliases(self):
         # Every absent/canonical/alias/both combination, including only one duplicated pair.
         for correct, incorrect in itertools.product(range(4), repeat=2):

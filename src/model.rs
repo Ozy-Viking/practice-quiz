@@ -1419,6 +1419,12 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
+        for field in ["alt", "src"] {
+            assert_eq!(
+                schema["definitions"]["QuizImage"]["properties"][field]["pattern"],
+                schema["definitions"]["QuizQuestion"]["properties"]["hints"]["items"]["pattern"]
+            );
+        }
         // Exhaust the Unicode scalar values, including U+0085 and U+FEFF.
         for ch in (0..=0x10FFFF).filter_map(char::from_u32) {
             let text = ch.to_string();

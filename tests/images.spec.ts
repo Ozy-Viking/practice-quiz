@@ -177,7 +177,7 @@ test('superseded image decoding releases provisional URLs and cannot overwrite n
 });
 
 for (const name of ['mixed.zip', 'formats.zip']) {
-  test(`${name} decodes actual fixtures including remote and animated formats`, async ({ page }) => {
+  test(`${name} decodes actual fixtures including remote and static GIF/WebP formats`, async ({ page }) => {
     await page.route('https://images.quiz.test/**', async route => route.fulfill({ contentType: 'image/png', body: await readFile(fixture('shapes.png')) }));
     await upload(page, name); await start(page); await decoded(page);
     await submit(page);
@@ -301,3 +301,32 @@ for (const name of ['bom.json', 'bom.zip']) {
     expect(json.source_manifest).toBe(name.endsWith('.zip') ? 'named.json' : null);
   });
 }
+
+for (const format of ['gif', 'webp']) {
+  test(`animated ${format} imports and displays its later frame`, async ({ page }) => {
+    await upload(page, `animated-${format}.zip`);
+    await start(page);
+    const animated = page.locator('.image-enlarge img[alt="Animation"]');
+    const expected = page.locator('.image-enlarge img[alt="Expected later frame"]');
+    await expect.poll(() => animated.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(320);
+    await expect.poll(() => expected.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(320);
+    const blueFrame = await expected.screenshot();
+    // Screenshots capture the displayed animation frame; canvas drawImage can
+    // instead expose only a format's default frame.
+    await expect.poll(async () => (await animated.screenshot()).equals(blueFrame), { timeout: 10_000 }).toBe(true);
+  });
+}
+
+test('enlarged image errors enter the shared failure and retry state', async ({ page }) => {
+  await upload(page);
+  await start(page);
+  await decoded(page);
+  await page.getByRole('button', { name: /Enlarge image:/ }).first().click();
+  await page.getByRole('dialog').locator('img').dispatchEvent('error');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Retry image' })).toHaveCount(1);
+  await page.getByRole('button', { name: 'Retry image' }).click();
+  await decoded(page);
+  await page.getByRole('button', { name: /Enlarge image:/ }).first().click();
+  await expect.poll(() => page.getByRole('dialog').locator('img').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(320);
+});
