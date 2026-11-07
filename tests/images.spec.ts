@@ -289,3 +289,15 @@ test('rejects decoded duplicate names and reads unambiguous CP437 names', async 
   expect(json.source_manifest).toBe('é.json');
   expect(json.questions[0].images[0].src).toBe('é.png');
 });
+
+for (const name of ['bom.json', 'bom.zip']) {
+  test(`accepts UTF-8 BOM in ${name}`, async ({ page }) => {
+    await upload(page, name);
+    await start(page);
+    await expect(page.getByText('Explain', { exact: true })).toBeVisible();
+    await submit(page);
+    const json = await exported(page);
+    expect(json.quiz_title).toBe('BOM quiz');
+    expect(json.source_manifest).toBe(name.endsWith('.zip') ? 'named.json' : null);
+  });
+}
