@@ -38,9 +38,49 @@ formats = json.loads(json.dumps(quiz))
 formats['questions'][0]['images'][1]['src'] = 'shapes.gif'
 formats['questions'][1]['images'][0]['src'] = 'shapes.webp'
 pack('formats.zip', [('formats.json', formats)], extras=[('shapes.gif', (root / 'shapes.gif').read_bytes()), ('shapes.webp', (root / 'shapes.webp').read_bytes())])
+
+# Compressing the enclosing quiz folder preserves package-relative image paths.
+wrapped = json.loads(json.dumps(quiz))
+for question in wrapped['questions']:
+    for image in question['images']:
+        if image['src'] == 'shapes.png':
+            image['src'] = 'images/a/b/c/d/image.png'
+wrapped_assets = [
+    ('quiz/images/a/b/c/d/image.png', (root / 'shapes.png').read_bytes()),
+    ('quiz/figures/week 1/形.jpg', (root / 'shapes.jpg').read_bytes()),
+]
+pack('wrapped.zip', [('quiz/quiz.json', wrapped)], False, [
+    ('quiz/', b''), ('quiz/images/', b''), *wrapped_assets,
+    ('.DS_Store', b'ignored'), ('__MACOSX/._quiz', b'ignored'),
+    ('quiz/.DS_Store', b'ignored'), ('quiz/__MACOSX/._quiz.json', b'ignored'),
+    ('quiz/nested/not-a-quiz.json', '{bad'),
+])
+second = json.loads(json.dumps(wrapped))
+second['title'] = 'Second wrapped quiz'
+second['questions'][0]['question'] = 'Which shape is orange?'
+second['questions'][0]['correct_answers'] = ['Circle']
+second['questions'][0]['incorrect_answers'] = ['Rectangle']
+for question in second['questions']:
+    for image in question['images']:
+        if image['src'] == 'images/a/b/c/d/image.png':
+            image['src'] = 'images/second.png'
+broken_images = json.loads(json.dumps(wrapped))
+broken_images['questions'][0]['images'][1]['src'] = 'missing.png'
+pack('wrapped-chooser.zip', [
+    ('quiz/quiz.json', '{bad'), ('quiz/A revision.JSON', wrapped),
+    ('quiz/B second.json', second), ('quiz/notes.json', '{bad'),
+    ('quiz/broken-images.json', broken_images),
+], False, [
+    *wrapped_assets, ('quiz/images/second.png', (root / 'shapes.png').read_bytes()),
+    ('quiz/nested/ignored.json', '{bad'), ('quiz/__MACOSX/ignored.json', '{bad'),
+])
+pack('root-priority-invalid.zip', [('quiz.json', '{bad'), ('quiz/quiz.json', wrapped)], False, wrapped_assets)
+pack('depth-two.zip', [('outer/quiz/quiz.json', wrapped)], False,
+     [('outer/' + name, data) for name, data in wrapped_assets])
 (root / 'quiz.json').write_text(json.dumps(quiz, indent=2, ensure_ascii=False)+'\n')
 examples = root.parents[2] / 'examples'
 (examples / 'images' / 'image-practice.zip').write_bytes((root / 'single.zip').read_bytes())
+(examples / 'images' / 'wrapped-image-practice.zip').write_bytes((root / 'wrapped.zip').read_bytes())
 (examples / 'images' / 'Biology revision.JSON').write_text(json.dumps(quiz, indent=2, ensure_ascii=False)+'\n')
 for q in quiz['questions']:
     for image in q['images']: image['src'] = 'https://example.org/quiz/' + ('shapes.png' if image['src'] == 'shapes.png' else 'photo')
