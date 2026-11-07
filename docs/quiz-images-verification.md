@@ -91,3 +91,11 @@ The shared JSON parsing path now strips exactly one leading UTF-8 BOM for standa
 All reported findings from the Astra and Sol full-branch reviews have been addressed. Neither reviewer re-reviewed the subsequent fixes; executable regression evidence is provided here. CodeRabbit was not used for Sol's review, and no CodeRabbit process remained running when the parent's process check was performed.
 
 Final validation including the BOM fix: `cargo test --locked` passed all **61** tests; formatting and diff checks passed. `QUIZ_TEST_PORT=8099 npx playwright test --project=chromium --project=firefox --reporter=line` passed all **118** tests in 36.5 seconds using a freshly built WASM app. The earlier WebKit and physical-device/dataset limitations remain.
+
+## GitHub CodeRabbit feedback
+
+The GitHub review completed successfully on `e22f48f` (the CLI attempt separately failed authentication). Both inline findings were valid and are addressed: image `alt` and `src` schema patterns now share the existing Rust-compatible whitespace definition, and real two-frame GIF/WebP fixtures replace the misleading implication that single-frame format coverage tested animation. Browser tests compare the displayed animation with a blue reference frame, proving that a later frame renders. Native schema equality, Python validation, and an ECMAScript RegExp check cover U+0085/U+FEFF behavior.
+
+The review also noted an unverified enlargement-only failure path. A focused error-event test confirms that the separate dialog image needs its own error handler. It now enters the same failure/retry state as the inline image; retry and subsequent enlargement are tested. This test exercises the DOM error path directly rather than claiming a reproduced remote-host failure.
+
+Validation: **61 Rust tests, 3 Python schema tests, and 124 Chromium/Firefox tests passed** (38.5 s for browsers), plus formatting/diff checks. CodeRabbit's separate 80% docstring-coverage warning remains; no broad documentation-only refactor was made for that metric. WebKit and physical-device/dataset limits remain as above.

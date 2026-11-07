@@ -43,3 +43,18 @@ with zipfile.ZipFile(root / 'bom.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
     info = zipfile.ZipInfo('named.json', (2026, 1, 1, 0, 0, 0))
     info.compress_type = zipfile.ZIP_DEFLATED
     archive.writestr(info, bom)
+
+# Real two-frame animations: the first frame is red, the later frame is blue.
+first = Image.new('RGB', (320, 180), 'red')
+later = Image.new('RGB', (320, 180), 'blue')
+later.save(root / 'later-frame.png')
+for ext in ['gif', 'webp']:
+    first.save(root / f'animated.{ext}', save_all=True, append_images=[later], duration=[200, 1000], loop=0, lossless=True)
+    with Image.open(root / f'animated.{ext}') as animation:
+        assert animation.n_frames == 2
+    manifest = {'questions':[{'id':'q', 'type':'short_answer', 'question':'Describe the animation', 'images':[
+        {'src': f'animated.{ext}', 'alt':'Animation'}, {'src':'later-frame.png','alt':'Expected later frame'}]}]}
+    with zipfile.ZipFile(root / f'animated-{ext}.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
+        for path, data in [('quiz.json', json.dumps(manifest).encode()), (f'animated.{ext}', (root / f'animated.{ext}').read_bytes()), ('later-frame.png', (root / 'later-frame.png').read_bytes())]:
+            info = zipfile.ZipInfo(path, (2026,1,1,0,0,0)); info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, data)
