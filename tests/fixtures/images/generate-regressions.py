@@ -21,3 +21,17 @@ for name in ['oversized-frame.gif', 'oversized-metadata.png', 'oversized-header.
         for path, data in [('quiz.json', json.dumps(manifest).encode()), (name, (root / name).read_bytes())]:
             info=zipfile.ZipInfo(path, (2026,1,1,0,0,0));info.compress_type=zipfile.ZIP_DEFLATED
             archive.writestr(info,data)
+
+# CP437 and UTF-8 names can decode identically despite distinct raw bytes.
+def encoded_names(name, entries):
+    b = io.BytesIO()
+    with zipfile.ZipFile(b, 'w', zipfile.ZIP_DEFLATED) as archive:
+        for path, data in entries:
+            info = zipfile.ZipInfo(path, (2026, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, data)
+    data = b.getvalue().replace(b'x.json', b'\x82.json').replace(b'x.png', b'\x82.png')
+    (root / name).write_bytes(data)
+manifest = {'title':'CP437 quiz', 'questions':[{'id':'q', 'type':'short_answer', 'question':'Describe', 'images':[{'src':'é.png','alt':'Shapes'}]}]}
+encoded_names('cp437.zip', [('x.json', json.dumps(manifest).encode()), ('x.png', png)])
+encoded_names('duplicate-decoded.zip', [('x.json', json.dumps(manifest).encode()), ('é.json', json.dumps(manifest).encode())])

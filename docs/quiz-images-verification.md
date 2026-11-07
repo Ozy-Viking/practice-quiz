@@ -71,3 +71,13 @@ Final validation after fixes:
 - An initial attempted dialog-key fix failed the new retry regression in both browsers; it was replaced by conditional unmount/remount before the successful final run.
 
 The original WebKit/system-library and physical-device/dataset verification limitations remain. No second independent review was run after these focused fixes. Nothing has been pushed.
+
+## Full-branch Astra review after rebase
+
+Review of `49eb10e…c069169` found two further ZIP issues: raw filename duplicate detection missed decoded-name collisions, and the custom footer preflight could disagree with the directory selected by the ZIP parser.
+
+The importer now uses the exact-pinned `zip` crate's incremental `ZipIterable` API, checks its directory count before collecting entries, and retains those same parsed entries for reads. It indexes entries by decoded name and rejects collisions; reads use the stored entry rather than a second filename lookup. The API is under `zip::unstable::read`, so the existing exact `=9.4.1` pin is required and upgrades must verify this contract.
+
+Added native regressions for fake footers in ZIP comments, decoded duplicate names, and successful CP437 manifest/image lookup, plus browser coverage of collision rejection and CP437 render/export. The reviewer's allocation harness now measures 60 allocated bytes for rejecting the normal 60,000-entry archive and 82 bytes for rejecting its fake-footer variant, versus the reported 16,746,636 bytes before the fix. The reviewer's original duplicate-name archive is also rejected. These numbers measure `prepare()` allocations, excluding the already-read input archive.
+
+After the rebase and these fixes, native tests pass (60), schema tests pass (2), and formatting/diff checks pass. `QUIZ_TEST_PORT=8099 npx playwright test --project=chromium --project=firefox --reporter=line` passed all 114 tests in 36.2 seconds against the freshly built WASM app. Sol's additional independent review remains in progress; CodeRabbit is excluded by user instruction.
