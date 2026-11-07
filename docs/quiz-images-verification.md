@@ -81,3 +81,13 @@ The importer now uses the exact-pinned `zip` crate's incremental `ZipIterable` A
 Added native regressions for fake footers in ZIP comments, decoded duplicate names, and successful CP437 manifest/image lookup, plus browser coverage of collision rejection and CP437 render/export. The reviewer's allocation harness now measures 60 allocated bytes for rejecting the normal 60,000-entry archive and 82 bytes for rejecting its fake-footer variant, versus the reported 16,746,636 bytes before the fix. The reviewer's original duplicate-name archive is also rejected. These numbers measure `prepare()` allocations, excluding the already-read input archive.
 
 After the rebase and these fixes, native tests pass (60), schema tests pass (2), and formatting/diff checks pass. `QUIZ_TEST_PORT=8099 npx playwright test --project=chromium --project=firefox --reporter=line` passed all 114 tests in 36.2 seconds against the freshly built WASM app. Sol's additional independent review remains in progress; CodeRabbit is excluded by user instruction.
+
+## Sol 6.1 full-branch review
+
+Sol independently reviewed the same pinned `c069169` implementation without CodeRabbit or other external review services. It confirmed the footer issue above and found one additional compatibility regression: the byte-based importer rejected a leading UTF-8 BOM that the previous browser `File.text()` path removed.
+
+The shared JSON parsing path now strips exactly one leading UTF-8 BOM for standalone files and selected ZIP manifests. Size checks and aggregate accounting still use the original byte length. Native tests compare BOM and ordinary JSON semantics, check selected manifest provenance, and retain rejection for duplicate BOMs and malformed JSON. Browser tests upload both `bom.json` and `bom.zip` and verify completion and exports.
+
+All reported findings from the Astra and Sol full-branch reviews have been addressed. Neither reviewer re-reviewed the subsequent fixes; executable regression evidence is provided here. CodeRabbit was not used for Sol's review, and no CodeRabbit process remained running when the parent's process check was performed.
+
+Final validation including the BOM fix: `cargo test --locked` passed all **61** tests; formatting and diff checks passed. `QUIZ_TEST_PORT=8099 npx playwright test --project=chromium --project=firefox --reporter=line` passed all **118** tests in 36.5 seconds using a freshly built WASM app. The earlier WebKit and physical-device/dataset limitations remain.

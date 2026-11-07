@@ -372,8 +372,11 @@ pub async fn load(
             archive.read(name, JSON_LIMIT)?
         }
     };
+    // Match browser File.text()/TextDecoder's handling of a UTF-8 BOM while
+    // retaining the full input length for all byte-limit accounting.
+    let json = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
     let mut quiz: QuizFile =
-        serde_json::from_slice(&bytes).map_err(|e| format!("Invalid JSON: {e}"))?;
+        serde_json::from_slice(json).map_err(|e| format!("Invalid JSON: {e}"))?;
     validate_quiz(&quiz)?;
     quiz.source_manifest = manifest;
     let mut assets = AssetStore::default();
@@ -528,6 +531,26 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn accepts_one_leading_utf8_bom_in_json_and_zip_manifests() {
+        let plain = br#"{"title":"BOM quiz","questions":[{"id":"q","question":"Explain","type":"short_answer"}]}"#;
+        let mut bom = b"\xef\xbb\xbf".to_vec();
+        bom.extend_from_slice(plain);
+        let (expected, _) = load_now(ImportSource::Json(plain.to_vec()), None).unwrap();
+        let (actual, _) = load_now(ImportSource::Json(bom.clone()), None).unwrap();
+        assert_eq!(actual, expected);
+        let archive = prepare("bom.zip", zip(&[("named.json", &bom)])).unwrap();
+        let (mut bundled, _) = load_now(archive, Some("named.json")).unwrap();
+        assert_eq!(
+            bundled.source_manifest.take().as_deref(),
+            Some("named.json")
+        );
+        assert_eq!(bundled, expected);
+        bom.splice(..0, b"\xef\xbb\xbf".iter().copied());
+        assert!(load_now(ImportSource::Json(bom), None).is_err());
+        assert!(load_now(ImportSource::Json(b"\xef\xbb\xbf{broken".to_vec()), None).is_err());
+    }
+
     #[test]
     fn arbitrary_root_manifest_shared_images_and_export_provenance() {
         let source = prepare(

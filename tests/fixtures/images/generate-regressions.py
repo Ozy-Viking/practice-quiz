@@ -35,3 +35,11 @@ def encoded_names(name, entries):
 manifest = {'title':'CP437 quiz', 'questions':[{'id':'q', 'type':'short_answer', 'question':'Describe', 'images':[{'src':'é.png','alt':'Shapes'}]}]}
 encoded_names('cp437.zip', [('x.json', json.dumps(manifest).encode()), ('x.png', png)])
 encoded_names('duplicate-decoded.zip', [('x.json', json.dumps(manifest).encode()), ('é.json', json.dumps(manifest).encode())])
+
+# Preserve File.text() compatibility for BOM-prefixed standalone and bundled JSON.
+bom = b'\xef\xbb\xbf' + json.dumps({'title':'BOM quiz','questions':[{'id':'q','type':'short_answer','question':'Explain'}]}).encode()
+(root / 'bom.json').write_bytes(bom)
+with zipfile.ZipFile(root / 'bom.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
+    info = zipfile.ZipInfo('named.json', (2026, 1, 1, 0, 0, 0))
+    info.compress_type = zipfile.ZIP_DEFLATED
+    archive.writestr(info, bom)
