@@ -461,6 +461,7 @@ pub fn validate_quiz(quiz: &QuizFile) -> Result<(), String> {
         return Err("Quiz file contains no questions".to_string());
     }
     let mut ids = HashSet::new();
+    let mut total_marks = 0.0_f64;
     for q in &quiz.questions {
         if !ids.insert(&q.id) {
             return Err(format!("Duplicate question id: {}", q.id));
@@ -472,6 +473,13 @@ pub fn validate_quiz(quiz: &QuizFile) -> Result<(), String> {
                 "Question {} marks must be a finite number greater than 0",
                 q.id
             ));
+        }
+        total_marks += q.marks.unwrap_or(config.marks_per_question);
+        if !total_marks.is_finite() {
+            return Err(
+                "Total available marks must be finite; reduce question marks or the quiz default"
+                    .into(),
+            );
         }
         if q.hints.iter().any(|hint| hint.trim().is_empty()) {
             return Err(format!(
@@ -1240,6 +1248,139 @@ mod tests {
         let sq = &build_session(&sample_quiz().questions, 1, 2.0, &mut rng)[0];
         for (_, label, _) in &sq.options {
             assert!(["A", "B", "C", "D", "E"].contains(&label.as_str()));
+        }
+    }
+
+    #[test]
+    fn labels_cross_z_aa_and_keep_correct_ids_after_shuffle() {
+        let mut quiz = sample_quiz();
+        quiz.questions.truncate(1);
+        quiz.questions[0].correct_answers = vec!["Right".into()];
+        quiz.questions[0].incorrect_answers = (0..26).map(|i| format!("Wrong {i}")).collect();
+        let mut session = build_seeded_session(&quiz.questions, 1, 42, 1.0);
+        let original_ids = session[0].correct_ids.clone();
+        let original_options = session[0].options.clone();
+        for shuffled in [false, true] {
+            if shuffled {
+                shuffle_session(&mut session, &mut SmallRng::seed_from_u64(7));
+                assert_ne!(session[0].options, original_options);
+            }
+            let question = &session[0];
+            let labels: HashSet<_> = question.options.iter().map(|(_, label, _)| label).collect();
+            assert_eq!(labels.len(), 27);
+            assert_eq!(question.options[25].1, "Z");
+            assert_eq!(question.options[26].1, "AA");
+            assert_eq!(question.correct_ids, original_ids);
+            for (id, _, text) in &question.options {
+                assert_eq!(question.correct_ids.contains(id), text == "Right");
+            }
+        }
+    }
+
+    #[test]
+    fn aggregate_marks_include_explicit_and_resolved_defaults() {
+        for kind in [QuestionType::MultipleChoice, QuestionType::ShortAnswer] {
+            for fallback in [false, true] {
+                for top_level in [false, true] {
+                    let mut quiz = sample_quiz();
+                    quiz.questions.truncate(2);
+                    quiz.config.marks_per_question = 1e308;
+                    if top_level {
+                        quiz.config.marks_per_question = 1.0;
+                        quiz.marks_per_question = Some(1e308);
+                    }
+                    for q in &mut quiz.questions {
+                        q.kind = kind;
+                        q.marks = if fallback { None } else { Some(1e308) };
+                        if kind == QuestionType::ShortAnswer {
+                            q.correct_answers.clear();
+                            q.incorrect_answers.clear();
+                        }
+                    }
+                    assert!(
+                        validate_quiz(&quiz)
+                            .unwrap_err()
+                            .contains("Total available marks")
+                    );
+                    quiz.questions[0].marks = Some(1.0);
+                    validate_quiz(&quiz).unwrap();
+                    let session = build_seeded_session(
+                        &quiz.questions,
+                        2,
+                        0,
+                        quiz.effective_config().marks_per_question,
+                    );
+                    let responses = session
+                        .iter()
+                        .map(|q| (q.id.clone(), Response::Choices(q.correct_ids.clone())))
+                        .collect();
+                    let results = build_results(
+                        &session,
+                        &responses,
+                        &HintUsage::new(),
+                        &quiz.effective_config(),
+                    );
+                    assert!(results.1.is_finite() && results.2.is_finite());
+                    let json: serde_json::Value = serde_json::from_str(
+                        &results_json(&quiz, "", 0, &session, &results).unwrap(),
+                    )
+                    .unwrap();
+                    assert!(json["total_available_marks"].is_number());
+                    assert!(json["total_score"].is_number());
+                    assert!(json["total_max"].is_number());
+                    if kind == QuestionType::MultipleChoice {
+                        assert_eq!(json["percentage"], 100.0);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn short_answer_option_aliases_accept_one_spelling_and_reject_duplicates() {
+        for correct in ["correct_answers", "correctAnswers"] {
+            for incorrect in ["incorrect_answers", "incorrectAnswers"] {
+                let question = serde_json::json!({
+                    "id": "q", "type": "short_answer", "question": "Q",
+                    correct: [], incorrect: []
+                });
+                let quiz: QuizFile =
+                    serde_json::from_value(serde_json::json!({"questions": [question.clone()]}))
+                        .unwrap();
+                validate_quiz(&quiz).unwrap();
+                for (canonical, alias) in [
+                    ("correct_answers", "correctAnswers"),
+                    ("incorrect_answers", "incorrectAnswers"),
+                ] {
+                    let mut duplicate = question.clone();
+                    duplicate[canonical] = serde_json::json!([]);
+                    duplicate[alias] = serde_json::json!([]);
+                    let error = serde_json::from_value::<QuizQuestion>(duplicate).unwrap_err();
+                    assert!(error.to_string().contains("duplicate field"), "{error}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn schema_hint_pattern_matches_runtime_whitespace() {
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../assets/quiz-schema.json")).unwrap();
+        let pattern = regex::Regex::new(
+            schema["definitions"]["QuizQuestion"]["properties"]["hints"]["items"]["pattern"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        // Exhaust the Unicode scalar values, including U+0085 and U+FEFF.
+        for ch in (0..=0x10FFFF).filter_map(char::from_u32) {
+            let text = ch.to_string();
+            assert_eq!(
+                pattern.is_match(&text),
+                !text.trim().is_empty(),
+                "U+{:04X}",
+                ch as u32
+            );
         }
     }
 
