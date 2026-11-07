@@ -1,186 +1,292 @@
 # Practice Quiz
 
-Use this link to the [Live Website](https://ozy-viking.github.io/practice-quiz/) and upload a json test and have a crack.
+[Open Practice Quiz](https://ozy-viking.github.io/practice-quiz/) and upload a JSON or ZIP quiz.
 
-## Repeat a quiz
+## Questions JSON
 
-Settings include a decimal seed from 0 to 4294967295. A successful upload creates one
-seed; **New seed** replaces it when you want another draw. Leading zeros and surrounding
-spaces are accepted and normalized when you start. The active seed appears in the quiz
-and results. Click the displayed seed to copy it.
-Copied and downloaded results JSON include this value as the numeric `seed` field.
+### Quiz fields
 
-With the same source question array in the same order, filters, question count, seed,
-and generator version, Start produces the same questions and answer order. Generator v1
-uses ChaCha8Rng from rand_chacha 0.3.1 with rand 0.8 shuffling, freshly seeded for each
-Start. True/False answers always put True first. Changing the file order, settings, or
-generator version may change the result; a seed alone does not identify a quiz.
+| Field | Required? | Meaning / default |
+|---|---|---|
+| `$schema` | No | Editor validation: `https://ozy-viking.github.io/practice-quiz/quiz-schema.json`. |
+| `title` | No | Quiz heading; falls back to `config.title`, then `Practice Quiz`. |
+| `questions` | Yes | Nonempty array of questions. |
+| `config` | No | Default settings; individual fields are optional. |
+| `config.title` | No | Fallback quiz title. |
+| `config.description` | No | Quiz description. |
+| `config.default_question_count` | No | Initial question count; positive integer, capped at the number available. Defaults to all questions. |
+| `config.marks_per_question` | No | Default available marks; positive number, including fractions. Defaults to `1`. |
+| `marks_per_question` | No | Overrides `config.marks_per_question`. |
+| `config.allow_negative_mark` | No | Allows scores below zero; defaults to `false`. Alias: `config.negative_marks`. |
+| `negative_marks` | No | Overrides `config.allow_negative_mark`. |
 
-On results, **Rerun same questions** starts a blank attempt using the exact questions and
-answer order from that session. Uncheck **Keep question and answer order** to shuffle those same
-questions and their answers for the next attempt. True/False answers stay True first. The displayed seed
-identifies the original draw. **Back to Settings** preserves filters, regex inputs,
-count, and seed so you can adjust them or repeat the draw. Loading a new quiz resets
-settings and attempts after the file passes validation. Settings and attempts stay in
-memory for the current page only.
+### Question fields
+
+| Field | Required? | Meaning / default |
+|---|---|---|
+| `id` | Yes | String unique within the quiz. |
+| `question` | Yes | Prompt text. |
+| `type` | No | `multiple_choice` (default) or `short_answer` (unmarked text response). |
+| `correct_answers` | MCQ only | Nonempty array of correct strings. Alias: `correctAnswers`. For short answers, omit or use `[]`. |
+| `incorrect_answers` | MCQ only | Array of wrong strings; may be empty. Alias: `incorrectAnswers`. For short answers, omit or use `[]`. |
+| `marks` | No | Positive available marks, including fractions; overrides the quiz default. |
+| `hints` | No | Nonblank plain-text strings, revealed one at a time in array order without a score penalty. Defaults to `[]`. |
+| `images` | No | Image objects in display order; defaults to `[]`. |
+| `explanation` | No | Post-submission explanation; used when `metadata.explanation` is absent. |
+| `metadata` | No | Study information below; all fields optional. Alias: `hiddenInfo`. |
+
+Use either a field's canonical name or its alias, never both.
+
+| Metadata field | Required? | Meaning |
+|---|---|---|
+| `study_location` | No | Teaching location, such as `Week 1`; enables location filtering. |
+| `topic` | No | Subject area; enables topic filtering. |
+| `timestamp` | No | Lecture timestamp or source reference. |
+| `answer` | No | Original answer-key reference. |
+| `explanation` | No | Post-submission explanation; takes priority over question-level `explanation`. |
+| `notes` | No | Study notes, shown when no explanation exists. |
+
+### Images and uploads
+
+| Image field | Required? | Meaning |
+|---|---|---|
+| `src` | Yes | Absolute HTTPS URL without credentials, or an exact, case-sensitive path relative to the ZIP root. Replace illustrative `example.org` URLs with public image URLs. |
+| `alt` | Yes | Nonblank alternative text describing the image. |
+| `caption` | No | Plain-text caption below the image. |
+
+| Upload | Requirements |
+|---|---|
+| JSON | Image sources must be HTTPS URLs; hosts must allow embedding. |
+| ZIP | Quiz JSON files go at the archive root; choose one if several exist. May mix HTTPS URLs and bundled PNG, JPEG, GIF or WebP images. Local paths cannot use absolute paths, backslashes, colons, empty segments or `.` / `..`. |
+| Limits | JSON: 2 MiB. ZIP: 50 MiB, 1,000 entries, 100 MiB total uncompressed. Each bundled image: 10 MiB and 20 megapixels; expanded PNG metadata: 8 MiB per image. |
+
+### Three-question example
+
+Save as `quiz.json` at the root of `biology.zip`, alongside `figures/cells.png`.
+
+```json
+{
+  "$schema": "https://ozy-viking.github.io/practice-quiz/quiz-schema.json",
+  "title": "Biology revision",
+  "config": {
+    "title": "Biology practice",
+    "description": "Cells and photosynthesis",
+    "default_question_count": 3,
+    "marks_per_question": 1,
+    "allow_negative_mark": false
+  },
+  "marks_per_question": 2,
+  "negative_marks": false,
+  "questions": [
+    {
+      "id": "q1",
+      "type": "multiple_choice",
+      "question": "Which organelle carries out photosynthesis?",
+      "marks": 2,
+      "correct_answers": ["Chloroplast"],
+      "incorrect_answers": ["Nucleus", "Mitochondrion"],
+      "hints": ["Look for the organelle containing chlorophyll."],
+      "images": [
+        {
+          "src": "https://example.org/chloroplast.png",
+          "alt": "A chloroplast with stacks of internal membranes",
+          "caption": "Figure 1: Chloroplast"
+        }
+      ],
+      "explanation": "Chloroplasts contain chlorophyll for photosynthesis.",
+      "metadata": {
+        "study_location": "Week 1",
+        "topic": "Photosynthesis",
+        "timestamp": "00:12:30",
+        "answer": "Worksheet 1, Q1",
+        "explanation": "Chloroplasts contain chlorophyll for photosynthesis.",
+        "notes": "Review the chloroplast diagram."
+      }
+    },
+    {
+      "id": "q2",
+      "type": "multiple_choice",
+      "question": "Which structures occur in both plant and animal cells? Select all that apply.",
+      "marks": 2,
+      "correct_answers": ["Cell membrane", "Cytoplasm"],
+      "incorrect_answers": ["Cell wall", "Chloroplast"],
+      "hints": ["Compare the two cell diagrams.", "Focus on structures shared by both cells."],
+      "images": [
+        {
+          "src": "figures/cells.png",
+          "alt": "Plant and animal cell diagrams shown side by side",
+          "caption": "Figure 2: Comparing cells"
+        }
+      ],
+      "metadata": {
+        "topic": "Cells",
+        "explanation": "Both have a cell membrane and cytoplasm; animal cells lack cell walls and chloroplasts."
+      }
+    },
+    {
+      "id": "q3",
+      "type": "short_answer",
+      "question": "Explain how photosynthesis supports a plant.",
+      "marks": 2.5,
+      "hints": [],
+      "metadata": {
+        "topic": "Photosynthesis",
+        "notes": "Include light energy, carbon dioxide and water."
+      }
+    }
+  ]
+}
+```
 
 ## Results JSON
 
-Copy Results JSON and Download Results JSON export the same `format_version: 4` document.
-It includes the quiz title, source filename, seed, scoring config, question count,
-total score, maximum score, percentage, and an array of completed questions.
+**Copy Results JSON** and **Download Results JSON** export the same completed attempt.
 
-Each multiple-choice question includes `id`, `text`, `type: "multiple_choice"`, `status`, `score`, `max_score`, and `metadata`,
-plus the following answer fields:
+| Quiz field | Meaning |
+|---|---|
+| `quiz_title` | Resolved quiz title. |
+| `source_file` | Uploaded filename. |
+| `source_manifest` | Selected root JSON filename for ZIP uploads; `null` for standalone JSON. |
+| `seed` | Numeric draw seed (`0`–`4294967295`). Matching source order, filters, count and seed reproduce the draw. Reruns may reshuffle the same questions while retaining the original seed. |
+| `config` | Effective quiz settings after top-level overrides. |
+| `question_count` / `scored_question_count` | All questions / MCQs only. |
+| `total_available_marks` | Available marks across all questions, including short answers. |
+| `total_score` / `total_max` | Awarded / available MCQ marks only. |
+| `percentage` | `total_score / total_max × 100`; `null` with no MCQs. |
+| `questions` | Results in the current attempt's display order. |
+
+| Question field | Present for | Meaning |
+|---|---|---|
+| `id`, `type` | All | Source identifiers. |
+| `text` | All | Source `question` text. |
+| `images` | All | Original references and descriptions; `[]` for no images. Keep the source ZIP to retain bundled images. |
+| `metadata` | All | Study information with the resolved explanation; absent values become `null`. |
+| `max_score` | All | Available marks. |
+| `hints` | All | All source hints, including unrevealed hints. |
+| `hints_viewed` | All | Whether any hint was revealed. |
+| `viewed_hint_indices` | All | Sorted, unique, zero-based indices of revealed hints; otherwise `[]`. |
+| `status` | MCQ | `correct`, `partially_correct`, `incorrect` or `unanswered`. Partial correctness can still score zero after penalties. |
+| `status` | Short answer | `answered_unmarked` or `unanswered_unmarked`; blank or whitespace-only responses are unanswered. |
+| `score` | MCQ | `max_score × (correct selected / correct options − wrong selected / wrong options)`, floored at zero unless negative marks are enabled. Unanswered questions score zero; with no wrong options, the penalty is zero. |
+| `answers` | MCQ | Every option keyed by its lowercase label in this attempt's display order. |
+| `correct` / `selected` | MCQ | Correct / selected labels, in display order. |
+| `missed` / `incorrect` | MCQ | Correct labels not selected / wrong labels selected; empty categories are `[]`. |
+| `response` | Short answer | Exact typed text, preserving whitespace and line breaks; no `score` or option fields. |
+
+### Matching results example
 
 ```json
 {
-  "answers": {"a": "2", "b": "4", "c": "3", "d": "5"},
-  "correct": ["a", "b"],
-  "selected": ["a", "c"],
-  "missed": ["b"],
-  "incorrect": ["c"]
+  "format_version": 4,
+  "quiz_title": "Biology revision",
+  "source_file": "biology.zip",
+  "source_manifest": "quiz.json",
+  "seed": 0,
+  "config": {
+    "marks_per_question": 2.0,
+    "allow_negative_mark": false,
+    "title": "Biology practice",
+    "description": "Cells and photosynthesis",
+    "default_question_count": 3
+  },
+  "question_count": 3,
+  "total_score": 2.0,
+  "total_max": 4.0,
+  "percentage": 50.0,
+  "scored_question_count": 2,
+  "total_available_marks": 6.5,
+  "questions": [
+    {
+      "images": [
+        {
+          "src": "https://example.org/chloroplast.png",
+          "alt": "A chloroplast with stacks of internal membranes",
+          "caption": "Figure 1: Chloroplast"
+        }
+      ],
+      "id": "q1",
+      "text": "Which organelle carries out photosynthesis?",
+      "status": "correct",
+      "max_score": 2.0,
+      "metadata": {
+        "study_location": "Week 1",
+        "timestamp": "00:12:30",
+        "topic": "Photosynthesis",
+        "answer": "Worksheet 1, Q1",
+        "explanation": "Chloroplasts contain chlorophyll for photosynthesis.",
+        "notes": "Review the chloroplast diagram."
+      },
+      "hints": ["Look for the organelle containing chlorophyll."],
+      "hints_viewed": false,
+      "viewed_hint_indices": [],
+      "type": "multiple_choice",
+      "score": 2.0,
+      "answers": {
+        "a": "Chloroplast",
+        "b": "Mitochondrion",
+        "c": "Nucleus"
+      },
+      "correct": ["a"],
+      "selected": ["a"],
+      "missed": [],
+      "incorrect": []
+    },
+    {
+      "images": [
+        {
+          "src": "figures/cells.png",
+          "alt": "Plant and animal cell diagrams shown side by side",
+          "caption": "Figure 2: Comparing cells"
+        }
+      ],
+      "id": "q2",
+      "text": "Which structures occur in both plant and animal cells? Select all that apply.",
+      "status": "partially_correct",
+      "max_score": 2.0,
+      "metadata": {
+        "study_location": null,
+        "timestamp": null,
+        "topic": "Cells",
+        "answer": null,
+        "explanation": "Both have a cell membrane and cytoplasm; animal cells lack cell walls and chloroplasts.",
+        "notes": null
+      },
+      "hints": ["Compare the two cell diagrams.", "Focus on structures shared by both cells."],
+      "hints_viewed": true,
+      "viewed_hint_indices": [0],
+      "type": "multiple_choice",
+      "score": 0.0,
+      "answers": {
+        "a": "Cytoplasm",
+        "b": "Chloroplast",
+        "c": "Cell membrane",
+        "d": "Cell wall"
+      },
+      "correct": ["a", "c"],
+      "selected": ["c", "d"],
+      "missed": ["a"],
+      "incorrect": ["d"]
+    },
+    {
+      "images": [],
+      "id": "q3",
+      "text": "Explain how photosynthesis supports a plant.",
+      "status": "answered_unmarked",
+      "max_score": 2.5,
+      "metadata": {
+        "study_location": null,
+        "timestamp": null,
+        "topic": "Photosynthesis",
+        "answer": null,
+        "explanation": null,
+        "notes": "Include light energy, carbon dioxide and water."
+      },
+      "hints": [],
+      "hints_viewed": false,
+      "viewed_hint_indices": [],
+      "type": "short_answer",
+      "response": "Photosynthesis uses light energy to convert carbon dioxide and water into sugars.\nThese sugars support growth and respiration."
+    }
+  ]
 }
 ```
-
-`answers` contains every option, keyed by the lowercase label from that attempt's
-display order. The label arrays follow that same order. `missed` lists correct options
-that were not selected; `incorrect` lists selected wrong options. Empty categories
-are `[]`. Rerun exports use the current attempt's order, including after reshuffling.
-Version 2 replaces version 1's `correct_answers`, `selected_answers`,
-`missed_correct_answers`, and `wrong_selected_answers` pairs with these fields.
-
-
-## Mixed questions, marks, and hints
-
-Choose one JSON or ZIP quiz with the file picker or drop it on **Drop a JSON or ZIP quiz here, or choose a file**.
-The same validation applies to both paths, regardless of the file's MIME type. Multiple-file
-drops are rejected. A failed upload leaves the existing quiz state intact. When replacing a completed quiz, **Back to Results** returns to the previous attempt and its exports; it is cleared only after a valid replacement loads.
-
-Questions default to `"type": "multiple_choice"`; existing files and camelCase aliases still
-work. MCQs require `correct_answers` (nonempty) and `incorrect_answers` (may be empty).
-Use `"type": "short_answer"` for a multiline, unmarked response. Omit answer arrays or use
-empty arrays on short answers; nonempty options are rejected. Question IDs must be unique.
-
-```json
-{
-  "id": "explain-1",
-  "type": "short_answer",
-  "marks": 2.5,
-  "question": "Explain why this works.",
-  "hints": ["Consider the starting conditions.", "What stays unchanged?"],
-  "metadata": {"topic": "Reasoning"}
-}
-```
-
-Both types accept positive numeric `marks`, including fractions. Available marks resolve in
-this order: question `marks`, top-level `marks_per_question`, `config.marks_per_question`,
-then 1. Zero, negative, null, nonnumeric, and non-finite overrides are invalid. Available
-marks appear on every question and result. MCQ credit and penalties scale by resolved marks.
-Short answers have no awarded score. Mixed-quiz scores and percentages cover MCQs only;
-all-short-answer quizzes show completion and total available marks without a grade.
-
-Both types accept a `hints` array of nonempty plain-text strings. One “Show next hint” button
-reveals hints in source order, one per activation. Revealed hints stay visible in separate
-blocks with source line breaks preserved; the button disappears after the last hint. Viewing
-hints does not count as answering and has no score penalty. Once viewed, a hint stays in the
-attempt's history even after editing an answer. Omitted or empty arrays produce no hint controls or result badges.
-
-Typed responses preserve whitespace, Unicode, and line breaks; whitespace-only answers are
-unanswered. Blank submission is allowed. Reruns, settings transitions, and successful replacement
-uploads clear responses and hint history. Refresh loses in-memory work; export submitted results
-to keep them. There is no autosave or marking workflow for short answers.
-
-Version 3 retains version 2's MCQ label mappings and adds `type`, `hints`, `hints_viewed`, and
-`viewed_hint_indices` to every question. Indices are sorted, unique, zero-based, and refer to
-source hint order. Hintless questions always export `[]`, `false`, and `[]`. Hint definitions
-are exported as study material; usage records only hints actually revealed before submission.
-Short-answer entries include `id`, `text`, `type: "short_answer"`, exact `response`,
-`status: "answered_unmarked"` or `"unanswered_unmarked"`, `max_score`, `metadata`, and hint
-fields. They omit `score` and all option fields. `max_score` always means available marks.
-`question_count` covers all questions; `scored_question_count` counts MCQs. `total_available_marks`
-sums all questions, while `total_score` and `total_max` cover MCQs. `percentage` is null when
-there are no MCQs. Copy and download serialize the same document, including for MCQ-only quizzes.
-Version 2 consumers must accommodate this versioned contract change.
-
-## Images and ZIP quizzes
-
-Both question types accept an optional `images` array in display order:
-
-```json
-"images": [
-  { "src": "figures/week 1/cell.png", "alt": "Cell diagram with structure A indicated", "caption": "Figure 1" }
-]
-```
-
-`src` and `alt` must be nonblank strings. `caption` is optional plain text. Omit
-`images` or use `[]` for text-only questions; `null` is invalid. Images appear below
-the prompt in quizzes, results, and study review. Activate an image with the mouse
-or keyboard to enlarge it; Escape or **Close image** closes the dialog and restores
-focus. Viewing images does not change answers, marks, or hint history.
-
-For **standalone JSON**, use absolute HTTPS image URLs without embedded credentials.
-Extensionless endpoints work. HTTP, protocol-relative, `data:`, and `blob:` sources
-are rejected. Images load directly from their hosts with `referrerpolicy="no-referrer"`;
-the host still receives a request. Hosts must allow public embedding. Failed remote
-images show alternative text and **Retry image**. Remote bytes, format and dimensions
-cannot be checked during import.
-
-For **ZIP**, put one or more quiz JSON files at the archive root. Any root JSON
-filename works (case-insensitive `.json` suffix). A sole candidate loads automatically;
-multiple candidates require an explicit selection from a sorted list. `quiz.json`
-has no priority. Invalid selected JSON leaves the chooser open so another file can
-be selected. Canceling or returning to results preserves the previous attempt.
-Nested JSON is not a quiz candidate, and unselected JSON need not be valid.
-
-Local image references are exact, case-sensitive paths relative to the ZIP root:
-`photo.png`, `figures/photo.jpg`, and `week 1/形.webp` are valid. There is no mandatory
-images folder. Paths are not URL-decoded. Absolute paths, backslashes, colons,
-empty segments, `.`/`..`, duplicate names, symlinks and encryption are rejected.
-Ordinary directories and macOS metadata are ignored. Other unrelated files are not
-decompressed, but archive-wide validation still applies. ZIPs may mix local images
-and HTTPS URLs. Stored and Deflate compression are supported.
-
-Limits are checked before accepting a replacement:
-
-| Resource | Limit |
-|---|---:|
-| Uploaded ZIP | 50 MiB |
-| Standalone JSON / selected manifest | 2 MiB |
-| Archive entries (including directories/metadata) | 1,000 |
-| Aggregate declared uncompressed bytes | 100 MiB |
-| Actual imported uncompressed bytes | 100 MiB |
-| Each referenced image | 10 MiB |
-| Each referenced image's dimensions (including GIF frame extents) | 20 megapixels |
-| Expanded PNG compressed metadata, per image | 8 MiB |
-
-Bundled PNG, JPEG, GIF and WebP signatures and dimensions are checked before
-sequential browser decoding. Corrupt or missing referenced images reject the import.
-Reads stop at the byte cap plus one. No archive is extracted to disk. Shared images
-use one Blob URL, retained through settings, results and reruns. Failed, canceled or
-superseded imports clean up provisional URLs; successful replacement, explicit
-quiz discard and app teardown release the previous assets. Refresh loses the
-in-memory quiz, as before.
-
-Try [the portable sample ZIP](examples/images/image-practice.zip), its
-[source manifest](examples/images/Biology%20revision.JSON), or the
-[HTTPS JSON authoring example](examples/images/url-quiz.json). The HTTPS example uses
-illustrative `example.org` URLs: replace them with real public image endpoints.
-Tests use generated local fixtures, never those external URLs.
-
-Results version 4 adds each question's original `images` and top-level
-`source_manifest` (the exact selected root filename, or `null` for plain JSON).
-`source_file` remains the uploaded filename, including `.zip`. Copy and download
-produce identical JSON, with no Blob URLs or embedded image data. **Results are an
-answer record, not a self-contained image archive**: keep the source ZIP for local
-images. All version 3 answer, mark, hint, and scoring fields remain unchanged.
-
-To run browser tests against this checkout without reusing another dev server:
-
-```sh
-QUIZ_TEST_PORT=8093 npm run test:e2e -- --project=chromium --project=firefox
-```
-
-Native checks: `cargo fmt --check` and `cargo test --locked`. Browser build:
-`dx build --web`. Fixtures can be regenerated with
-`python3 tests/fixtures/images/generate.py` (Pillow required).
