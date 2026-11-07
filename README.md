@@ -151,7 +151,8 @@ Limits are checked before accepting a replacement:
 | Aggregate declared uncompressed bytes | 100 MiB |
 | Actual imported uncompressed bytes | 100 MiB |
 | Each referenced image | 10 MiB |
-| Each referenced image's dimensions | 20 megapixels |
+| Each referenced image's dimensions (including GIF frame extents) | 20 megapixels |
+| Expanded PNG compressed metadata, per image | 8 MiB |
 
 Bundled PNG, JPEG, GIF and WebP signatures and dimensions are checked before
 sequential browser decoding. Corrupt or missing referenced images reject the import.

@@ -49,10 +49,12 @@ fn Figure(image: QuizImage) -> Element {
                 }
             }
             if let Some(caption) = &image.caption { figcaption { "{caption}" } }
-            dialog { id: "{dialog_id}", class: "image-dialog", aria_label: "Enlarged image: {image.alt}",
-                form { method: "dialog", button { autofocus: true, "Close image" } }
-                img { src: "{src}", alt: "{image.alt}", referrerpolicy: "no-referrer" }
-                if let Some(caption) = &image.caption { p { "{caption}" } }
+            if !failed() {
+                dialog { id: "{dialog_id}", class: "image-dialog", aria_label: "Enlarged image: {image.alt}",
+                    form { method: "dialog", button { autofocus: true, "Close image" } }
+                    img { src: "{src}", alt: "{image.alt}", referrerpolicy: "no-referrer" }
+                    if let Some(caption) = &image.caption { p { "{caption}" } }
+                }
             }
         }
     }

@@ -190,6 +190,130 @@ pub fn prepare(name: &str, bytes: Vec<u8>) -> Result<ImportSource, String> {
     }
 }
 
+fn check_dimensions(width: u32, height: u32) -> Result<(), String> {
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > PIXEL_LIMIT {
+        return Err("Image exceeds 20 megapixels or has empty dimensions".into());
+    }
+    Ok(())
+}
+
+/// Inspect every GIF frame without decoding LZW data. Browsers may expand the
+/// canvas beyond the logical screen, so that header alone is not a safe bound.
+fn check_gif_dimensions(bytes: &[u8]) -> Result<(), String> {
+    fn take<'a>(bytes: &mut &'a [u8], n: usize) -> Result<&'a [u8], String> {
+        let data = bytes.get(..n).ok_or("Truncated GIF block")?;
+        *bytes = &bytes[n..];
+        Ok(data)
+    }
+    fn table(bytes: &mut &[u8], packed: u8) -> Result<(), String> {
+        if packed & 0x80 != 0 {
+            take(bytes, 3 * (1usize << ((packed & 7) + 1)))?;
+        }
+        Ok(())
+    }
+    fn blocks(bytes: &mut &[u8]) -> Result<(), String> {
+        loop {
+            let count = take(bytes, 1)?[0] as usize;
+            if count == 0 {
+                return Ok(());
+            }
+            take(bytes, count)?;
+        }
+    }
+    fn word(bytes: &[u8]) -> u32 {
+        u32::from(u16::from_le_bytes([bytes[0], bytes[1]]))
+    }
+    let mut remaining = bytes;
+    let header = take(&mut remaining, 13)?;
+    let mut width = word(&header[6..8]);
+    let mut height = word(&header[8..10]);
+    check_dimensions(width, height)?;
+    table(&mut remaining, header[10])?;
+    let mut frames = 0;
+    loop {
+        match take(&mut remaining, 1)?[0] {
+            0x2c => {
+                let frame = take(&mut remaining, 9)?;
+                let frame_width = word(&frame[4..6]);
+                let frame_height = word(&frame[6..8]);
+                check_dimensions(frame_width, frame_height)?;
+                width = width.max(word(&frame[..2]) + frame_width);
+                height = height.max(word(&frame[2..4]) + frame_height);
+                check_dimensions(width, height)?;
+                table(&mut remaining, frame[8])?;
+                take(&mut remaining, 1)?; // LZW minimum code size
+                blocks(&mut remaining)?;
+                frames += 1;
+            }
+            0x21 => {
+                take(&mut remaining, 1)?; // extension label
+                blocks(&mut remaining)?;
+            }
+            0x3b if frames > 0 => return Ok(()),
+            _ => return Err("Invalid GIF block or missing frame".into()),
+        }
+    }
+}
+
+/// Bound compressed ancillary metadata independently: the PNG decoder can
+/// ignore malformed/oversized ICC profiles, but a browser may still expand them.
+fn check_png_metadata(bytes: &[u8]) -> Result<(), String> {
+    fn terminated(bytes: &[u8]) -> Result<&[u8], String> {
+        let end = bytes
+            .iter()
+            .position(|b| *b == 0)
+            .ok_or("Invalid PNG metadata")?;
+        Ok(&bytes[end + 1..])
+    }
+    const METADATA_LIMIT: u64 = 8 * 1024 * 1024;
+    let mut remaining = &bytes[8..];
+    let mut expanded = 0;
+    while !remaining.is_empty() {
+        let header = remaining.get(..8).ok_or("Truncated PNG chunk")?;
+        let length = u32::from_be_bytes(header[..4].try_into().unwrap()) as usize;
+        let chunk = remaining
+            .get(..length.checked_add(12).ok_or("Invalid PNG chunk")?)
+            .ok_or("Truncated PNG chunk")?;
+        let data = &chunk[8..8 + length];
+        let compressed = match &header[4..8] {
+            b"iCCP" | b"zTXt" => {
+                let value = terminated(data)?;
+                if value.first() != Some(&0) {
+                    return Err("Invalid PNG compression method".into());
+                }
+                Some(&value[1..])
+            }
+            b"iTXt" => {
+                let value = terminated(data)?;
+                let fields = value.get(..2).ok_or("Invalid PNG text metadata")?;
+                let text = terminated(terminated(&value[2..])?)?;
+                match fields {
+                    [1, 0] => Some(text),
+                    [0, 0] => None,
+                    _ => return Err("Invalid PNG text compression".into()),
+                }
+            }
+            _ => None,
+        };
+        if let Some(data) = compressed {
+            let decoder = flate2::read::ZlibDecoder::new(data);
+            expanded += std::io::copy(
+                &mut decoder.take(METADATA_LIMIT - expanded + 1),
+                &mut std::io::sink(),
+            )
+            .map_err(|e| format!("Invalid PNG compressed metadata: {e}"))?;
+            if expanded > METADATA_LIMIT {
+                return Err("PNG expanded metadata exceeds 8 MiB".into());
+            }
+        }
+        remaining = &remaining[chunk.len()..];
+        if &header[4..8] == b"IEND" {
+            return Ok(());
+        }
+    }
+    Err("Missing PNG end chunk".into())
+}
+
 pub fn image_info(bytes: &[u8]) -> Result<&'static str, String> {
     if bytes.len() > IMAGE_LIMIT {
         return Err("Image exceeds 10 MiB".into());
@@ -203,12 +327,31 @@ pub fn image_info(bytes: &[u8]) -> Result<&'static str, String> {
         image::ImageFormat::WebP => "image/webp",
         _ => return Err("Unsupported image format (use PNG, JPEG, GIF or WebP)".into()),
     };
-    let (width, height) = image::ImageReader::with_format(Cursor::new(bytes), format)
-        .into_dimensions()
-        .map_err(|e| format!("Invalid image header: {e}"))?;
-    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > PIXEL_LIMIT {
-        return Err("Image exceeds 20 megapixels or has empty dimensions".into());
+    if format == image::ImageFormat::Gif {
+        check_gif_dimensions(bytes)?;
     }
+    if format == image::ImageFormat::Png {
+        // Read IHDR before constructing a decoder: decoder construction can
+        // expand compressed color profiles before returning dimensions.
+        let header = bytes.get(..33).ok_or("Truncated PNG header")?;
+        if &header[8..16] != b"\x00\x00\x00\x0dIHDR" {
+            return Err("Invalid PNG IHDR".into());
+        }
+        check_dimensions(
+            u32::from_be_bytes(header[16..20].try_into().unwrap()),
+            u32::from_be_bytes(header[20..24].try_into().unwrap()),
+        )?;
+        check_png_metadata(bytes)?;
+    }
+    let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
+    let mut limits = image::Limits::default();
+    // PNG applies this during decoder construction, including iCCP expansion.
+    limits.max_alloc = Some(8 * 1024 * 1024);
+    reader.limits(limits);
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|e| format!("Invalid image header or metadata limit exceeded: {e}"))?;
+    check_dimensions(width, height)?;
     Ok(mime)
 }
 
@@ -533,6 +676,48 @@ mod tests {
         gif[6..10].copy_from_slice(&[0xff, 0xff, 0xff, 0xff]);
         assert!(image_info(&gif).err().unwrap().contains("20 megapixels"));
     }
+    #[test]
+    fn rejects_gif_frame_extent_beyond_forged_logical_screen() {
+        let gif = include_bytes!("../tests/fixtures/images/oversized-frame.gif");
+        assert_eq!(&gif[6..10], &[1, 0, 1, 0]);
+        assert!(image_info(gif).unwrap_err().contains("20 megapixels"));
+        // Scan later frames too, including their offsets and local color tables.
+        let normal = include_bytes!("../tests/fixtures/images/shapes.gif");
+        let mut animation = normal[..normal.len() - 1].to_vec();
+        animation.extend_from_slice(&[0x2c, 0xff, 0xff, 0xff, 0xff, 1, 0, 1, 0, 0]);
+        animation.extend_from_slice(&[2, 0, 0x3b]);
+        assert!(
+            image_info(&animation)
+                .unwrap_err()
+                .contains("20 megapixels")
+        );
+    }
+
+    #[test]
+    fn png_checks_header_before_metadata_and_bounds_compressed_profiles() {
+        let huge = include_bytes!("../tests/fixtures/images/oversized-header.png");
+        // Must reject on pixels, before attempting any metadata decompression.
+        assert!(image_info(huge).unwrap_err().contains("20 megapixels"));
+        let metadata = include_bytes!("../tests/fixtures/images/oversized-metadata.png");
+        assert!(metadata.len() < 20_000);
+        assert!(
+            image_info(metadata)
+                .unwrap_err()
+                .contains("metadata exceeds 8 MiB")
+        );
+        // The limit also applies to ancillary chunks after image data.
+        let length = u32::from_be_bytes(metadata[33..37].try_into().unwrap()) as usize;
+        let profile = &metadata[33..33 + length + 12];
+        let mut after_data = PNG[..PNG.len() - 12].to_vec();
+        after_data.extend_from_slice(profile);
+        after_data.extend_from_slice(&PNG[PNG.len() - 12..]);
+        assert!(
+            image_info(&after_data)
+                .unwrap_err()
+                .contains("metadata exceeds 8 MiB")
+        );
+    }
+
     #[test]
     fn dishonest_declared_sizes_do_not_bypass_actual_manifest_or_image_caps() {
         for (name, cap) in [("quiz.json", JSON_LIMIT), ("image.png", IMAGE_LIMIT)] {
