@@ -283,6 +283,8 @@ for (const [label, text, message] of [
 
 test('file drops outside upload are canceled in every phase and preserve responses and hints', async ({ page }) => {
   await page.goto('./');
+  // The HTML body exists before WASM mounts App and installs its window listeners.
+  await expect(page.locator('.upload-drop-target')).toBeVisible();
   const files = [{ name: 'outside.json', text: '{broken' }];
   const guard = async () => {
     for (const event of ['dragover', 'drop']) {
