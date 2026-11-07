@@ -60,9 +60,27 @@ Use either a field's canonical name or its alias, never both.
 | ZIP | Quiz JSON files go at the archive root; choose one if several exist. May mix HTTPS URLs and bundled PNG, JPEG, GIF or WebP images. Local paths cannot use absolute paths, backslashes, colons, empty segments or `.` / `..`. |
 | Limits | JSON: 2 MiB. ZIP: 50 MiB, 1,000 entries, 100 MiB total uncompressed. Each bundled image: 10 MiB and 20 megapixels; expanded PNG metadata: 8 MiB per image. |
 
+### ZIP structure
+
+A ZIP bundles the quiz JSON and its local images into one upload. Put the JSON directly at the archive root, without an enclosing folder:
+
+```text
+biology.zip
+├── quiz.json
+├── chloroplast.png
+├── quiz/
+│   └── leaf.jpg
+└── images/
+    └── cells.png
+```
+
+In `quiz.json`, use `"src": "chloroplast.png"` for the root image, `"src": "quiz/leaf.jpg"` for the image in the folder matching the quiz filename, or `"src": "images/cells.png"` for the image in the `images` folder. Paths are case-sensitive and relative to the ZIP root. Folder names are your choice; neither `quiz` nor `images` is required.
+
+A single root JSON file loads automatically. If you include several root JSON files, the app asks which one to load; they can share bundled images. When creating the ZIP, select the JSON and image folders together so the JSON stays at the root.
+
 ### Three-question example
 
-Save as `quiz.json` at the root of `biology.zip`, alongside `figures/cells.png`.
+Save as `quiz.json` at the root of `biology.zip`, with `cells.png` in its `images` folder as shown above.
 
 ```json
 {
@@ -113,7 +131,7 @@ Save as `quiz.json` at the root of `biology.zip`, alongside `figures/cells.png`.
       "hints": ["Compare the two cell diagrams.", "Focus on structures shared by both cells."],
       "images": [
         {
-          "src": "figures/cells.png",
+          "src": "images/cells.png",
           "alt": "Plant and animal cell diagrams shown side by side",
           "caption": "Figure 2: Comparing cells"
         }
@@ -234,7 +252,7 @@ Save as `quiz.json` at the root of `biology.zip`, alongside `figures/cells.png`.
     {
       "images": [
         {
-          "src": "figures/cells.png",
+          "src": "images/cells.png",
           "alt": "Plant and animal cell diagrams shown side by side",
           "caption": "Figure 2: Comparing cells"
         }
