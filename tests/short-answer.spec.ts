@@ -90,7 +90,7 @@ test('mixed responses preserve exact Unicode, whitespace, literal markup, marks,
   await expect(page.locator('.study-summary')).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).bad)).toBeUndefined();
   const json = await exports(page);
-  expect(json).toMatchObject({ format_version: 3, question_count: 3, scored_question_count: 1,
+  expect(json).toMatchObject({ format_version: 4, question_count: 3, scored_question_count: 1,
     total_available_marks: 8.75, total_score: 1.25, total_max: 1.25, percentage: 100 });
   const answer = json.questions.find((q: any) => q.id === 'sa');
   expect(answer).toMatchObject({ type: 'short_answer', response: raw, status: 'answered_unmarked', max_score: 5.5 });
@@ -344,7 +344,7 @@ test('multiple files are rejected and text drags ignored; picker remains keyboar
   await expect(page.locator('.upload-drop-target')).not.toHaveClass(/dragging/);
   await page.locator('.upload-drop-target').dispatchEvent('drop', { dataTransfer: transfer });
   await expect(page.locator('.error-banner')).toContainText('exactly one');
-  await page.getByLabel('Drop a JSON quiz here, or choose a file').focus();
+  await page.getByLabel('Drop a JSON or ZIP quiz here, or choose a file').focus();
   await expect(page.locator('input[type=file]')).toBeFocused();
   await picker(page);
   await expect(page.getByText('Loaded: mixed.json (3 questions)')).toBeVisible();
@@ -354,8 +354,8 @@ test('multiple files are rejected and text drags ignored; picker remains keyboar
 test('unreadable files report an error and allow retry', async ({ page }) => {
   await page.goto('./');
   await page.evaluate(() => {
-    const original = File.prototype.text;
-    File.prototype.text = function () { if (this.name === 'unreadable.json') return Promise.reject(new Error('Read denied')); return original.call(this); };
+    const original = File.prototype.arrayBuffer;
+    File.prototype.arrayBuffer = function () { if (this.name === 'unreadable.json') return Promise.reject(new Error('Read denied')); return original.call(this); };
   });
   await drop(page, [{ name: 'unreadable.json', text: '{}' }]);
   await expect(page.locator('.error-banner')).toContainText('Failed to read file');
@@ -367,9 +367,9 @@ test('unreadable files report an error and allow retry', async ({ page }) => {
 test('a delayed older upload cannot overwrite a newer validation failure', async ({ page }) => {
   await page.goto('./');
   await page.evaluate(() => {
-    const original = File.prototype.text;
-    File.prototype.text = function () {
-      if (this.name === 'slow.json') return new Promise<string>((resolve, reject) => {
+    const original = File.prototype.arrayBuffer;
+    File.prototype.arrayBuffer = function () {
+      if (this.name === 'slow.json') return new Promise<ArrayBuffer>((resolve, reject) => {
         (window as any).finishOldRead = () => original.call(this).then(resolve, reject);
       });
       return original.call(this);

@@ -67,6 +67,7 @@ pub fn QuizView(
                             key: "{qid}",
                             div { class: "question-number", "Q{idx + 1}" }
                             p { class: "question-text", id: "question-{idx}", "{sq.text}" }
+                            super::QuestionImages { images: sq.images.clone() }
                             p { class: "available-marks", "Available marks: {sq.marks}" }
                             if sq.kind == QuestionType::ShortAnswer {
                                 span { class: "unmarked-label", "Unmarked" }

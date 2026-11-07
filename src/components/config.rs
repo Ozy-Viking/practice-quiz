@@ -28,6 +28,7 @@ pub fn ConfiguringView(
     mut active_seed: Signal<u32>,
     mut results: Signal<Option<ResultsData>>,
 ) -> Element {
+    let mut assets = use_context::<Signal<std::rc::Rc<crate::import::AssetStore>>>();
     let q = quiz.read().as_ref().unwrap().clone();
     let config = q.effective_config();
     let allow_neg = config.allow_negative_mark;
@@ -235,6 +236,7 @@ pub fn ConfiguringView(
                     onclick: move |_| {
                         phase.set(AppPhase::Upload);
                         quiz.set(None);
+                        assets.set(std::rc::Rc::new(crate::import::AssetStore::default()));
                         file_name.set(String::new());
                         load_error.set(String::new());
                         question_count.set(0);

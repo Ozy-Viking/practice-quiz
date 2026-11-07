@@ -1,12 +1,12 @@
 # Practice Quiz images — Proposal
 
-Status: Proposed implementation plan · Updated: 2026-11-07
+Status: Implemented locally; independent review pending · Updated: 2026-11-07
 
 ## Overview
 
 Support images on both multiple-choice and short-answer question prompts. Keep ordinary JSON uploads, including JSON containing image URLs. Add ZIP uploads for quizzes whose images should travel with the questions. Both inputs produce the same quiz model; ZIP is a packaging option, not a second question format.
 
-This plan complements the [short-answer work](t3-thread://v1/30d0afaa-d2b4-45ea-8c4c-60918ed2e166), including mixed question types, per-question marks, hints, existing results downloads, and drag-and-drop. That work is underway in a separate checkout. This document proposes the image feature; application behavior has not been changed.
+This plan complements the [short-answer work](t3-thread://v1/30d0afaa-d2b4-45ea-8c4c-60918ed2e166), including mixed question types, per-question marks, hints, existing results downloads, and drag-and-drop. That dependency was integrated locally from PR #5 at `bb7526872234815d61cb442a4d5e91a8686e385d`. This document preserves the agreed image feature plan; implementation and verification details are recorded in [quiz-images-verification.md](quiz-images-verification.md).
 
 ## The Problem
 

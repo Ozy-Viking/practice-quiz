@@ -145,7 +145,7 @@ test('copies and downloads the same complete results JSON', async ({ page, conte
   expect(downloaded).toBe(copied);
   const result = JSON.parse(downloaded);
   expect(result).toMatchObject({
-    format_version: 3,
+    format_version: 4,
     quiz_title: trueFalseQuizFixture.title,
     source_file: 'true-false-quiz.json',
     seed,
@@ -167,7 +167,7 @@ test('copies and downloads the same complete results JSON', async ({ page, conte
     }],
   });
   expect(result.questions[0]).toEqual({
-    type: 'multiple_choice', hints: [], hints_viewed: false, viewed_hint_indices: [],
+    type: 'multiple_choice', images: [], hints: [], hints_viewed: false, viewed_hint_indices: [],
     id: 'tf-1',
     text: trueFalseQuizFixture.questions[0].question,
     status: 'correct',
@@ -222,7 +222,7 @@ test('exports complete answer mappings for partial answers and an unanswered shu
   await page.getByRole('button', { name: 'Copy Results JSON' }).click();
   await expect(page.locator('.results-export').getByRole('status')).toHaveText('Results JSON copied to clipboard.');
   const partial = JSON.parse(await page.evaluate(() => (window as any).copiedResults as string));
-  expect(partial).toMatchObject({ format_version: 3, seed: 42, total_score: 0, total_max: 2, percentage: 0 });
+  expect(partial).toMatchObject({ format_version: 4, seed: 42, total_score: 0, total_max: 2, percentage: 0 });
   expect(partial.questions[0]).toMatchObject({
     id: 'multi-1',
     status: 'partially_correct',
@@ -248,7 +248,7 @@ test('exports complete answer mappings for partial answers and an unanswered shu
   const correct = Object.entries(rerunAnswers)
     .filter(([, text]) => ['2', '4'].includes(text!))
     .map(([label]) => label);
-  expect(unanswered).toMatchObject({ format_version: 3, seed: 42, total_score: 0, total_max: 2, percentage: 0 });
+  expect(unanswered).toMatchObject({ format_version: 4, seed: 42, total_score: 0, total_max: 2, percentage: 0 });
   expect(unanswered.questions[0]).toMatchObject({
     status: 'unanswered',
     score: 0,

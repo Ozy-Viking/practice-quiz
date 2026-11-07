@@ -12,3 +12,6 @@ pub use upload::UploadView;
 
 mod seed_display;
 use seed_display::SeedDisplay;
+
+mod question_images;
+use question_images::QuestionImages;
