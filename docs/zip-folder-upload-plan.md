@@ -1,6 +1,6 @@
 # Practice Quiz folder ZIP upload plan
 
-Status: Implementation in progress; plan reviewed by three independent agents · Date: 2026-11-08
+Status: Implemented and verified; three independent implementation reviews completed · Date: 2026-11-08
 
 ## Overview
 
@@ -86,7 +86,15 @@ Required acceptance coverage:
 
 Review existing `nested.zip` assertions individually: that fixture currently places JSON in a folder but images at the archive root, so it remains invalid under this contract. Introduce a genuinely wrapped fixture for success, and update existing error-message expectations and race tests deliberately.
 
-Implementation checks: `cargo fmt --check`, `cargo test --locked`, the existing Python schema tests, `dx build --web`, and the Playwright suite in supported installed browsers. This planning change does not require running application tests.
+Implementation verified at `8c3f5fb`, rebased onto `main` at `6e88d8c` including merged PR #6:
+
+- `cargo test --locked`: 68 passed, including 7 new native import tests; the pre-change baseline passed all 61 tests.
+- `python -m unittest discover -s tests -p schema_test.py`: 3 passed.
+- `cargo fmt --check`, `git diff --check`, and `dx build --web`: passed.
+- `QUIZ_TEST_PORT=8107 npx playwright test --project=chromium --project=firefox --reporter=line`: 142 passed in 41.2 seconds against a fresh app build, including 18 added browser cases across the two browsers.
+- Three independent read-only reviews of `6e88d8c…8c3f5fb` covered standards, specification compliance, and archive correctness; all returned no findings.
+
+WebKit launch was attempted separately and failed because host libraries `libicu74`, `libxml2`, and `libflite1` are missing. WebKit tests were not run. The installed Dioxus CLI reports a 0.7.10/0.7.9 version mismatch; the browser build nevertheless exits successfully and the browser suite passes. No dependency versions were changed.
 
 ## Risks & Mitigations
 
