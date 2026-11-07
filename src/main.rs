@@ -79,8 +79,54 @@ mod tests {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+struct FileDropGuard {
+    window: web_sys::Window,
+    listener: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::DragEvent)>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl FileDropGuard {
+    fn install() -> Option<Self> {
+        use wasm_bindgen::JsCast;
+        let window = web_sys::window()?;
+        let listener = wasm_bindgen::closure::Closure::new(|event: web_sys::DragEvent| {
+            if event.data_transfer().is_some_and(|data| {
+                data.types()
+                    .iter()
+                    .any(|kind| kind.as_string().as_deref() == Some("Files"))
+            }) {
+                event.prevent_default();
+            }
+        });
+        let guard = Self { window, listener };
+        for kind in ["dragover", "drop"] {
+            guard
+                .window
+                .add_event_listener_with_callback(kind, guard.listener.as_ref().unchecked_ref())
+                .ok()?;
+        }
+        Some(guard)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for FileDropGuard {
+    fn drop(&mut self) {
+        use wasm_bindgen::JsCast;
+        for kind in ["dragover", "drop"] {
+            let _ = self
+                .window
+                .remove_event_listener_with_callback(kind, self.listener.as_ref().unchecked_ref());
+        }
+    }
+}
+
 #[component]
 fn App() -> Element {
+    // The hook owns the listeners until the app unmounts, across every quiz phase.
+    #[cfg(target_arch = "wasm32")]
+    use_hook(|| std::rc::Rc::new(FileDropGuard::install()));
     let phase: Signal<AppPhase> = use_signal(|| AppPhase::Upload);
     let quiz: Signal<Option<QuizFile>> = use_signal(|| None);
     let session: Signal<Vec<SessionQuestion>> = use_signal(Vec::new);

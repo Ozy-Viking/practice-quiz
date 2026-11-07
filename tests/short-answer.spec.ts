@@ -43,13 +43,18 @@ function question(page: Page, text: string) {
 function result(page: Page, text: string) {
   return page.locator('.result-block').filter({ has: page.getByText(text, { exact: true }) });
 }
-async function drop(page: Page, files: { name: string; text: string; mime?: string }[], event = 'drop') {
+async function drop(page: Page, files: { name: string; text: string; mime?: string }[], event = 'drop', target = '.upload-drop-target') {
   const transfer = await page.evaluateHandle((files) => {
     const data = new DataTransfer();
     for (const f of files) data.items.add(new File([f.text], f.name, { type: f.mime ?? '' }));
     return data;
   }, files);
-  await page.locator('.upload-drop-target').dispatchEvent(event, { dataTransfer: transfer });
+  const prevented = await page.locator(target).evaluate((element, { event, transfer }) => {
+    const dispatched = new DragEvent(event, { dataTransfer: transfer, bubbles: true, cancelable: true });
+    element.dispatchEvent(dispatched);
+    return dispatched.defaultPrevented;
+  }, { event, transfer });
+  expect(prevented).toBe(true);
   await transfer.dispose();
 }
 
@@ -275,6 +280,58 @@ for (const [label, text, message] of [
     await expect(page.getByText('Loaded: mixed.json (3 questions)')).toBeVisible();
   });
 }
+
+test('file drops outside upload are canceled in every phase and preserve responses and hints', async ({ page }) => {
+  await page.goto('./');
+  const files = [{ name: 'outside.json', text: '{broken' }];
+  const guard = async () => {
+    for (const event of ['dragover', 'drop']) {
+      await drop(page, files, event, 'body');
+      await drop(page, files, event, '.app-header');
+      const prevented = await page.evaluate((event) => {
+        const data = new DataTransfer();
+        data.setData('text/plain', 'ordinary text');
+        const dispatched = new DragEvent(event, { dataTransfer: data, bubbles: true, cancelable: true });
+        document.body.dispatchEvent(dispatched);
+        return dispatched.defaultPrevented;
+      }, event);
+      expect(prevented).toBe(false);
+    }
+  };
+  await guard();
+  await expect(page.locator('.error-banner')).toHaveCount(0);
+  await picker(page);
+  await guard();
+  await page.getByRole('button', { name: /Start Quiz/ }).click();
+  const sa = question(page, 'Explain your reasoning');
+  await sa.getByRole('textbox').fill('Keep this response');
+  await sa.getByRole('button', { name: 'Show next hint' }).click();
+  await question(page, 'Pick the right option').getByRole('button', { name: /Right/ }).click();
+  await guard();
+  await expect(sa.getByRole('textbox')).toHaveValue('Keep this response');
+  await expect(sa.locator('.hint-text')).toHaveCount(1);
+  await expect(page.getByText('2/3 answered')).toBeVisible();
+  await submit(page);
+  const original = await exports(page);
+  await guard();
+  expect(await exports(page)).toEqual(original);
+});
+
+// Use the browser's ECMAScript regex engine as well as Rust's parity test.
+test('schema hint whitespace matches upload validation at Unicode boundaries', async ({ page }) => {
+  const schema = JSON.parse(await readFile('assets/quiz-schema.json', 'utf8'));
+  const pattern = schema.definitions.QuizQuestion.properties.hints.items.pattern;
+  for (const [hint, accepted] of [['\u0085', false], ['\uFEFF', true], ['\u200B', true], ['\u3000', false], [' \u0085text\u3000', true]] as const) {
+    expect(await page.evaluate(({ pattern, hint }) => new RegExp(pattern).test(hint), { pattern, hint })).toBe(accepted);
+    await page.goto('./');
+    await picker(page, { questions: [{ id: 'q', type: 'short_answer', question: 'Q', hints: [hint] }] });
+    if (accepted) {
+      await expect(page.getByRole('button', { name: /Start Quiz/ })).toBeVisible();
+    } else {
+      await expect(page.locator('.error-banner')).toContainText('hints must contain nonempty text');
+    }
+  }
+});
 
 test('multiple files are rejected and text drags ignored; picker remains keyboard accessible', async ({ page }) => {
   await page.goto('./');
