@@ -12,6 +12,8 @@ pub const IMAGE_LIMIT: usize = 10 * 1024 * 1024;
 const TOTAL_LIMIT: u64 = 100 * 1024 * 1024;
 const ENTRY_LIMIT: usize = 1_000;
 const PIXEL_LIMIT: u64 = 20_000_000;
+const ZIP_LAYOUT_ERROR: &str =
+    "Put quiz JSON and its images at the ZIP root, or together inside one enclosing folder.";
 
 pub fn local_path(path: &str) -> Result<(), String> {
     if path.is_empty()
@@ -25,7 +27,7 @@ pub fn local_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// True for remote HTTPS, false for an exact archive-relative path.
+/// True for remote HTTPS, false for an exact package-relative path.
 pub fn image_source(src: &str) -> Result<bool, String> {
     if let Ok(url) = url::Url::parse(src) {
         if url.scheme() == "https"
@@ -51,6 +53,10 @@ fn ignored(name: &str) -> bool {
     name.starts_with("__MACOSX/") || name.rsplit('/').next() == Some(".DS_Store")
 }
 
+fn quiz_filename(name: &str) -> bool {
+    !name.contains('/') && name.to_ascii_lowercase().ends_with(".json")
+}
+
 #[derive(Clone)]
 pub enum ImportSource {
     Json(Vec<u8>),
@@ -60,6 +66,7 @@ pub enum ImportSource {
 pub struct Archive {
     bytes: Vec<u8>,
     entries: HashMap<String, zip::read::OwnedZipFileEntry>,
+    package_root: String,
     pub candidates: Vec<String>,
 }
 
@@ -80,7 +87,7 @@ impl Archive {
             return Err("ZIP exceeds 1,000 entries".into());
         }
         let mut total = 0u64;
-        let mut candidates = Vec::new();
+        let mut files = Vec::new();
         let mut entries = HashMap::new();
         for entry in zip.files().map_err(|e| format!("Invalid ZIP: {e}"))? {
             let entry = entry.map_err(|e| format!("Invalid ZIP entry: {e}"))?;
@@ -111,28 +118,48 @@ impl Archive {
             if total > TOTAL_LIMIT {
                 return Err("ZIP exceeds 100 MiB uncompressed".into());
             }
-            if !entry.is_dir()
-                && !ignored(&name)
-                && !name.contains('/')
-                && name.to_ascii_lowercase().ends_with(".json")
-            {
-                candidates.push(name.clone());
+            if !entry.is_dir() && !ignored(&name) {
+                files.push(name.clone());
             }
             entries.insert(name, entry.into());
         }
+        // Root manifests retain priority, even if selecting one later fails.
+        // Otherwise every substantive file must belong to a single wrapper.
+        let package_root = if files.iter().any(|name| quiz_filename(name)) {
+            String::new()
+        } else {
+            let folder = files
+                .first()
+                .and_then(|name| name.split_once('/'))
+                .map(|(folder, _)| folder)
+                .ok_or(ZIP_LAYOUT_ERROR)?;
+            let prefix = format!("{folder}/");
+            if !files.iter().all(|name| name.starts_with(&prefix)) {
+                return Err(ZIP_LAYOUT_ERROR.into());
+            }
+            prefix
+        };
+        let mut candidates: Vec<String> = files
+            .into_iter()
+            .filter(|name| {
+                name.strip_prefix(&package_root)
+                    .is_some_and(|relative| !ignored(relative) && quiz_filename(relative))
+            })
+            .collect();
         candidates.sort();
         if candidates.is_empty() {
-            return Err("Place at least one quiz JSON file at the ZIP root.".into());
+            return Err(ZIP_LAYOUT_ERROR.into());
         }
         Ok(Self {
             bytes,
             entries,
+            package_root,
             candidates,
         })
     }
 
     fn read(&self, name: &str, limit: usize) -> Result<Vec<u8>, String> {
-        if ignored(name) {
+        if ignored(name) || name.strip_prefix(&self.package_root).is_some_and(ignored) {
             return Err(format!("Metadata is not an image: {name}"));
         }
         let mut reader = Cursor::new(self.bytes.as_slice());
@@ -367,7 +394,7 @@ pub async fn load(
         ImportSource::Archive(archive) => {
             let name = manifest.as_ref().ok_or("Choose a quiz")?;
             if !archive.candidates.contains(name) {
-                return Err("Choose a root JSON file".into());
+                return Err("Choose one of the listed quiz JSON files".into());
             }
             archive.read(name, JSON_LIMIT)?
         }
@@ -391,11 +418,12 @@ pub async fn load(
             }
             let ImportSource::Archive(archive) = &source else {
                 return Err(format!(
-                    "Question {} references {}. Upload a ZIP containing the quiz JSON at its root and that image at the referenced path, or use an HTTPS image URL.",
+                    "Question {} references {}. Upload a ZIP containing the quiz JSON and its images at the ZIP root or together inside one enclosing folder, or use an HTTPS image URL.",
                     question.id, image.src
                 ));
             };
-            let bytes = archive.read(&image.src, IMAGE_LIMIT)?;
+            let path = format!("{}{}", archive.package_root, image.src);
+            let bytes = archive.read(&path, IMAGE_LIMIT)?;
             actual_total += bytes.len() as u64;
             if actual_total > TOTAL_LIMIT {
                 return Err("Actual uncompressed bytes exceed 100 MiB".into());
@@ -472,6 +500,7 @@ mod tests {
     }
     const MANIFEST: &[u8] = include_bytes!("../tests/fixtures/images/quiz.json");
     const PNG: &[u8] = include_bytes!("../tests/fixtures/images/shapes.png");
+    const IMAGELESS_MANIFEST: &[u8] = br#"{"title":"First quiz","questions":[{"id":"q","question":"Explain","type":"short_answer"}]}"#;
 
     #[test]
     fn exact_paths_and_https_sources() {
@@ -600,6 +629,208 @@ mod tests {
         assert!(load_now(source.clone(), Some("quiz.json")).is_err());
         assert!(load_now(source.clone(), Some("nested.json")).is_err());
         assert!(load_now(source, Some("A revision.json")).is_ok());
+    }
+
+    #[test]
+    fn wrapped_quiz_resolves_deep_images_preserving_original_references() {
+        let path = "images/a/b/c/d/image.png";
+        let mut manifest: serde_json::Value = serde_json::from_slice(MANIFEST).unwrap();
+        for question in manifest["questions"].as_array_mut().unwrap() {
+            for image in question["images"].as_array_mut().unwrap() {
+                image["src"] = path.into();
+            }
+        }
+        manifest["questions"][0]["images"][1]["src"] = "https://example.org/remote-image".into();
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        let root = prepare("root.zip", zip(&[("quiz.JSON", &bytes), (path, PNG)])).unwrap();
+        let wrapped = prepare(
+            "wrapped.zip",
+            zip(&[
+                ("Quiz 名/quiz.JSON", &bytes),
+                ("Quiz 名/images/a/b/c/d/image.png", PNG),
+                ("Quiz 名/nested/ignored.json", b"{bad"),
+            ]),
+        )
+        .unwrap();
+        let (mut expected, _) = load_now(root, Some("quiz.JSON")).unwrap();
+        let (mut quiz, assets) = load_now(wrapped, Some("Quiz 名/quiz.JSON")).unwrap();
+        assert_eq!(assets.urls.len(), 1);
+        assert!(assets.urls.contains_key(path));
+        assert_eq!(
+            quiz.source_manifest.take().as_deref(),
+            Some("Quiz 名/quiz.JSON")
+        );
+        expected.source_manifest = None;
+        assert_eq!(quiz, expected);
+    }
+
+    #[test]
+    fn wrapped_chooser_selects_each_valid_quiz_and_recovers_from_invalid_json() {
+        let second = br#"{"title":"Second quiz","questions":[{"id":"other","question":"Describe","type":"short_answer"}]}"#;
+        let source = prepare(
+            "wrapped.zip",
+            zip(&[
+                ("quiz/quiz.json", b"{bad"),
+                ("quiz/A revision.JSON", IMAGELESS_MANIFEST),
+                ("quiz/second.json", second),
+                ("quiz/nested/ignored.json", b"{bad"),
+            ]),
+        )
+        .unwrap();
+        let ImportSource::Archive(archive) = &source else {
+            panic!()
+        };
+        assert_eq!(
+            archive.candidates,
+            ["quiz/A revision.JSON", "quiz/quiz.json", "quiz/second.json"]
+        );
+        assert!(
+            load_now(source.clone(), Some("quiz/quiz.json"))
+                .err()
+                .unwrap()
+                .contains("Invalid JSON")
+        );
+        assert!(load_now(source.clone(), Some("second.json")).is_err());
+        for (name, title) in [
+            ("quiz/A revision.JSON", "First quiz"),
+            ("quiz/second.json", "Second quiz"),
+        ] {
+            let (quiz, _) = load_now(source.clone(), Some(name)).unwrap();
+            assert_eq!(quiz.title, title);
+            assert_eq!(quiz.source_manifest.as_deref(), Some(name));
+        }
+    }
+
+    #[test]
+    fn invalid_root_manifest_never_falls_back_to_a_wrapped_quiz() {
+        let source = prepare(
+            "root.zip",
+            zip(&[
+                ("root.json", b"{bad"),
+                ("quiz/quiz.json", IMAGELESS_MANIFEST),
+            ]),
+        )
+        .unwrap();
+        let ImportSource::Archive(archive) = &source else {
+            panic!()
+        };
+        assert_eq!(archive.candidates, ["root.json"]);
+        assert!(
+            load_now(source.clone(), Some("root.json"))
+                .err()
+                .unwrap()
+                .contains("Invalid JSON")
+        );
+        assert!(load_now(source, Some("quiz/quiz.json")).is_err());
+    }
+
+    #[test]
+    fn wrapper_requires_one_level_and_all_substantive_files_inside() {
+        let layouts: &[&[(&str, &[u8])]] = &[
+            &[],
+            &[("outer/quiz/quiz.json", IMAGELESS_MANIFEST)],
+            &[
+                ("quiz/quiz.json", IMAGELESS_MANIFEST),
+                ("other/quiz.json", IMAGELESS_MANIFEST),
+            ],
+            &[
+                ("quiz/quiz.json", IMAGELESS_MANIFEST),
+                ("readme.txt", b"outside"),
+            ],
+            &[
+                ("quiz/quiz.json", IMAGELESS_MANIFEST),
+                ("other/image.png", PNG),
+            ],
+            &[("quiz/__MACOSX/not-a-quiz.json", b"{bad")],
+        ];
+        for entries in layouts {
+            assert_eq!(Archive::new(zip(entries)).err().unwrap(), ZIP_LAYOUT_ERROR);
+        }
+    }
+
+    #[test]
+    fn empty_directory_records_and_metadata_do_not_change_wrapper_detection() {
+        let bytes = zip(&[
+            ("quiz/quiz.json", IMAGELESS_MANIFEST),
+            ("__MACOSX/._quiz", b"metadata"),
+            ("quiz/__MACOSX/extra.json", b"{bad"),
+            (".DS_Store", b"metadata"),
+            ("quiz/.DS_Store", b"metadata"),
+            ("other/.DS_Store", b"metadata"),
+        ]);
+        let mut writer = zip::ZipWriter::new_append(Cursor::new(bytes)).unwrap();
+        for directory in ["quiz/", "other/", "quiz/empty/", "__MACOSX/"] {
+            writer
+                .add_directory(directory, SimpleFileOptions::default())
+                .unwrap();
+        }
+        let source = prepare("wrapped.zip", writer.finish().unwrap().into_inner()).unwrap();
+        let ImportSource::Archive(archive) = &source else {
+            panic!()
+        };
+        assert_eq!(archive.candidates, ["quiz/quiz.json"]);
+        assert!(load_now(source, Some("quiz/quiz.json")).is_ok());
+    }
+
+    #[test]
+    fn metadata_image_reads_match_for_root_and_wrapped_packages() {
+        for prefix in ["", "quiz/"] {
+            for path in ["__MACOSX/image.png", "images/.DS_Store"] {
+                let manifest = serde_json::to_vec(&serde_json::json!({
+                    "questions": [{"id":"q", "question":"Describe", "type":"short_answer",
+                        "images":[{"src":path, "alt":"Figure"}]}]
+                }))
+                .unwrap();
+                let name = format!("{prefix}quiz.json");
+                let image = format!("{prefix}{path}");
+                let source =
+                    prepare("quiz.zip", zip(&[(&name, &manifest), (&image, PNG)])).unwrap();
+                assert!(
+                    load_now(source, Some(&name))
+                        .err()
+                        .unwrap()
+                        .contains("Metadata is not an image"),
+                    "{image}"
+                );
+            }
+        }
+        // A deeper ordinary image directory named __MACOSX is not metadata.
+        let manifest = br#"{"questions":[{"id":"q","question":"Describe","type":"short_answer","images":[{"src":"images/__MACOSX/image.png","alt":"Figure"}]}]}"#;
+        let source = prepare(
+            "wrapped.zip",
+            zip(&[
+                ("quiz/quiz.json", manifest),
+                ("quiz/images/__MACOSX/image.png", PNG),
+            ]),
+        )
+        .unwrap();
+        assert!(load_now(source, Some("quiz/quiz.json")).is_ok());
+    }
+
+    #[test]
+    fn wrapped_image_paths_are_exact_without_archive_root_fallback() {
+        let manifest = br#"{"questions":[{"id":"q","question":"Describe","type":"short_answer","images":[{"src":"image.png","alt":"Figure"}]}]}"#;
+        let source = prepare(
+            "wrapped.zip",
+            zip(&[("quiz/quiz.json", manifest), ("quiz/Image.png", PNG)]),
+        )
+        .unwrap();
+        assert!(
+            load_now(source, Some("quiz/quiz.json"))
+                .err()
+                .unwrap()
+                .contains("quiz/image.png: file not found")
+        );
+        let bytes = zip(&[("quiz/quiz.json", manifest), ("image.png", PNG)]);
+        assert_eq!(Archive::new(bytes).err().unwrap(), ZIP_LAYOUT_ERROR);
+        let manifest = br#"{"questions":[{"id":"q","question":"Describe","type":"short_answer","images":[{"src":"../image.png","alt":"Figure"}]}]}"#;
+        let source = prepare("wrapped.zip", zip(&[("quiz/quiz.json", manifest)])).unwrap();
+        assert!(
+            load_now(source, Some("quiz/quiz.json"))
+                .err()
+                .unwrap()
+                .contains("Unsafe archive path")
+        );
     }
     #[test]
     fn invalid_archives_paths_and_missing_or_corrupt_images_fail() {

@@ -90,6 +90,77 @@ test('chooser requires explicit selection, supports keyboard and invalid-file re
   expect((await exported(page)).source_manifest).toBe('A revision.json');
 });
 
+for (const drop of [false, true]) {
+  test(`one enclosing folder supports deeply nested images and original export paths; drop=${drop}`, async ({ page }) => {
+    await upload(page, 'wrapped.zip', drop);
+    await expect(page.getByRole('region', { name: 'Choose a quiz' })).toHaveCount(0);
+    await start(page); await decoded(page);
+    expect(await page.evaluate(() => (window as any).created.length)).toBe(2);
+    await submit(page); await decoded(page, true);
+    const json = await exported(page);
+    expect(json).toMatchObject({ format_version: 4, source_file: 'wrapped.zip', source_manifest: 'quiz/quiz.json' });
+    const original = JSON.parse(await readFile(fixture('quiz.json'), 'utf8'));
+    for (const question of original.questions) {
+      for (const image of question.images) {
+        if (image.src === 'shapes.png') image.src = 'images/a/b/c/d/image.png';
+      }
+      expect(json.questions.find((q: any) => q.id === question.id).images).toEqual(question.images);
+    }
+  });
+}
+
+test('wrapped chooser sorts full paths, recovers from invalid JSON and loads the selected valid quiz', async ({ page }) => {
+  await upload(page, 'wrapped-chooser.zip');
+  const chooser = page.getByRole('region', { name: 'Choose a quiz' });
+  await expect(chooser.getByRole('button')).toHaveText([
+    'quiz/A revision.JSON', 'quiz/B second.json', 'quiz/broken-images.json',
+    'quiz/notes.json', 'quiz/quiz.json', 'Cancel selection',
+  ]);
+  expect(await page.evaluate(() => (window as any).created)).toEqual([]);
+  await chooser.getByRole('button', { name: 'quiz/quiz.json', exact: true }).click();
+  await expect(page.locator('.error-banner')).toContainText('Invalid JSON');
+  await expect(chooser).toBeVisible();
+  await chooser.getByRole('button', { name: 'quiz/B second.json', exact: true }).focus();
+  await page.keyboard.press('Enter'); await start(page); await decoded(page);
+  await expect(page.getByText('Which shape is orange?', { exact: true })).toBeVisible();
+  await expect(page.getByText('Which shape is teal?', { exact: true })).toHaveCount(0);
+  await submit(page);
+  const json = await exported(page);
+  expect(json).toMatchObject({ quiz_title: 'Second wrapped quiz', source_manifest: 'quiz/B second.json' });
+  expect(json.questions.find((q: any) => q.id === 'mc').images[0].src).toBe('images/second.png');
+});
+
+test('wrapped chooser image failure releases provisional assets before another selection succeeds', async ({ page }) => {
+  await upload(page, 'wrapped-chooser.zip');
+  const chooser = page.getByRole('region', { name: 'Choose a quiz' });
+  await chooser.getByRole('button', { name: 'quiz/broken-images.json', exact: true }).click();
+  await expect(page.locator('.error-banner')).toContainText('missing.png');
+  await expect(chooser).toBeVisible();
+  expect(await page.evaluate(() => (window as any).created.length)).toBe(1);
+  expect(await page.evaluate(() => (window as any).revoked.includes((window as any).created[0]))).toBe(true);
+  await chooser.getByRole('button', { name: 'quiz/A revision.JSON', exact: true }).click();
+  await start(page); await decoded(page);
+  expect(await page.evaluate(() => (window as any).created.length)).toBe(3);
+  expect(await page.evaluate(() => (window as any).created.slice(1).some((url: string) => (window as any).revoked.includes(url)))).toBe(false);
+  await submit(page);
+  expect((await exported(page)).source_manifest).toBe('quiz/A revision.JSON');
+});
+
+test('an invalid root manifest does not fall back to a valid wrapped quiz', async ({ page }) => {
+  await upload(page, 'root-priority-invalid.zip');
+  await expect(page.locator('.error-banner')).toContainText('Invalid JSON');
+  await expect(page.getByRole('region', { name: 'Choose a quiz' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Load Quiz File' })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).created)).toEqual([]);
+});
+
+test('quiz discovery stops after one enclosing folder', async ({ page }) => {
+  await upload(page, 'depth-two.zip');
+  await expect(page.locator('.error-banner')).toContainText('ZIP root');
+  await expect(page.locator('.error-banner')).toContainText('one enclosing folder');
+  expect(await page.evaluate(() => (window as any).created)).toEqual([]);
+});
+
 test('failed and canceled replacements retain assets, answers, hints and provenance; successful replacement revokes old URLs', async ({ page }) => {
   await upload(page); await start(page);
   await block(page, 'sa').getByRole('textbox').fill('Keep this answer');
@@ -97,10 +168,10 @@ test('failed and canceled replacements retain assets, answers, hints and provena
   await submit(page);
   const original = await exported(page);
   const urls = await page.evaluate(() => [...(window as any).created]);
-  for (const name of ['chooser.zip', 'missing.zip', 'corrupt.zip', 'nested.zip']) {
+  for (const name of ['chooser.zip', 'wrapped-chooser.zip', 'missing.zip', 'corrupt.zip', 'nested.zip']) {
     await page.getByRole('button', { name: /Load New Quiz/ }).click();
     await upload(page, name);
-    if (name === 'chooser.zip') {
+    if (name.endsWith('chooser.zip')) {
       await page.getByRole('button', { name: 'Cancel selection' }).click();
       await expect(page.getByRole('region', { name: 'Choose a quiz' })).toHaveCount(0);
     } else { await expect(page.locator('.error-banner')).toBeVisible(); }
@@ -110,14 +181,16 @@ test('failed and canceled replacements retain assets, answers, hints and provena
     expect(await page.evaluate(urls => urls.some(url => (window as any).revoked.includes(url)), urls)).toBe(false);
   }
   await page.getByRole('button', { name: /Load New Quiz/ }).click();
-  await upload(page, 'chooser.zip');
+  await upload(page, 'wrapped-chooser.zip');
   // A newer upload removes the old chooser and replaces all active state together.
-  await upload(page);
+  await upload(page, 'wrapped.zip');
   await start(page); await decoded(page);
   expect(await page.evaluate(urls => urls.every(url => (window as any).revoked.includes(url)), urls)).toBe(true);
   await expect(block(page, 'sa').getByRole('textbox')).toHaveValue('');
   await submit(page);
-  expect((await exported(page)).questions.every((q: any) => !q.hints_viewed)).toBe(true);
+  const replacement = await exported(page);
+  expect(replacement.questions.every((q: any) => !q.hints_viewed)).toBe(true);
+  expect(replacement.source_manifest).toBe('quiz/quiz.json');
 });
 
 for (const shuffle of [false, true]) {
@@ -205,40 +278,44 @@ test('browser decoder rejection cleans provisional assets before retry', async (
   await upload(page); await start(page); await decoded(page);
 });
 
-test('canceling chooser decoding back to results drops provisional assets and preserves the completed attempt', async ({ page }) => {
-  await upload(page); await start(page); await submit(page);
-  const original = await exported(page);
-  await page.getByRole('button', { name: /Load New Quiz/ }).click();
-  await upload(page, 'chooser.zip');
-  await page.evaluate(() => {
-    HTMLImageElement.prototype.decode = function () { return new Promise<void>(() => {}); };
+for (const wrapped of [false, true]) {
+  test(`canceling chooser decoding back to results drops provisional assets and preserves the completed attempt; wrapped=${wrapped}`, async ({ page }) => {
+    await upload(page); await start(page); await submit(page);
+    const original = await exported(page);
+    await page.getByRole('button', { name: /Load New Quiz/ }).click();
+    await upload(page, wrapped ? 'wrapped-chooser.zip' : 'chooser.zip');
+    await page.evaluate(() => {
+      HTMLImageElement.prototype.decode = function () { return new Promise<void>(() => {}); };
+    });
+    await page.getByRole('button', { name: wrapped ? 'quiz/A revision.JSON' : 'A revision.json', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).created.length)).toBe(3);
+    await page.getByRole('button', { name: /Back to Results/ }).click();
+    await decoded(page, true);
+    expect(await exported(page)).toEqual(original);
+    await expect.poll(() => page.evaluate(() => (window as any).revoked.includes((window as any).created[2]))).toBe(true);
+    expect(await page.evaluate(() => (window as any).created.slice(0, 2).some((url: string) => (window as any).revoked.includes(url)))).toBe(false);
   });
-  await page.getByRole('button', { name: 'A revision.json', exact: true }).click();
-  await expect.poll(() => page.evaluate(() => (window as any).created.length)).toBe(3);
-  await page.getByRole('button', { name: /Back to Results/ }).click();
-  await decoded(page, true);
-  expect(await exported(page)).toEqual(original);
-  await expect.poll(() => page.evaluate(() => (window as any).revoked.includes((window as any).created[2]))).toBe(true);
-  expect(await page.evaluate(() => (window as any).created.slice(0, 2).some((url: string) => (window as any).revoked.includes(url)))).toBe(false);
-});
+}
 
-test('a chooser selection in flight cannot commit after a newer upload', async ({ page }) => {
-  await upload(page, 'chooser.zip');
-  await page.evaluate(() => {
-    const original = HTMLImageElement.prototype.decode;
-    HTMLImageElement.prototype.decode = function () {
-      return new Promise<void>((resolve, reject) => { (window as any).releaseDecode = () => original.call(this).then(resolve, reject); });
-    };
+for (const wrapped of [false, true]) {
+  test(`a chooser selection in flight cannot commit after a newer upload; wrapped=${wrapped}`, async ({ page }) => {
+    await upload(page, wrapped ? 'wrapped-chooser.zip' : 'chooser.zip');
+    await page.evaluate(() => {
+      const original = HTMLImageElement.prototype.decode;
+      HTMLImageElement.prototype.decode = function () {
+        return new Promise<void>((resolve, reject) => { (window as any).releaseDecode = () => original.call(this).then(resolve, reject); });
+      };
+    });
+    await page.getByRole('button', { name: wrapped ? 'quiz/A revision.JSON' : 'A revision.json', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => typeof (window as any).releaseDecode)).toBe('function');
+    await upload(page, 'nested.zip');
+    await expect(page.locator('.error-banner')).toContainText('ZIP root');
+    await page.evaluate(() => (window as any).releaseDecode());
+    await expect.poll(() => page.evaluate(() => (window as any).created.every((url: string) => (window as any).revoked.includes(url)))).toBe(true);
+    await expect(page.getByRole('region', { name: 'Choose a quiz' })).toHaveCount(0);
+    await expect(page.locator('.error-banner')).toContainText('ZIP root');
   });
-  await page.getByRole('button', { name: 'A revision.json', exact: true }).click();
-  await expect.poll(() => page.evaluate(() => typeof (window as any).releaseDecode)).toBe('function');
-  await upload(page, 'nested.zip');
-  await expect(page.locator('.error-banner')).toContainText('ZIP root');
-  await page.evaluate(() => (window as any).releaseDecode());
-  await expect.poll(() => page.evaluate(() => (window as any).created.every((url: string) => (window as any).revoked.includes(url)))).toBe(true);
-  await expect(page.getByRole('region', { name: 'Choose a quiz' })).toHaveCount(0);
-  await expect(page.locator('.error-banner')).toContainText('ZIP root');
-});
+}
 
 test('explicit discard from settings releases all active image URLs', async ({ page }) => {
   await upload(page);
@@ -247,18 +324,20 @@ test('explicit discard from settings releases all active image URLs', async ({ p
   expect(await page.evaluate(() => (window as any).created.every((url: string) => (window as any).revoked.includes(url)))).toBe(true);
 });
 
-test('Cancel selection releases a pending decoder without waiting or leaving upload', async ({ page }) => {
-  await upload(page, 'chooser.zip');
-  await page.evaluate(() => {
-    HTMLImageElement.prototype.decode = function () { return new Promise<void>(() => {}); };
+for (const wrapped of [false, true]) {
+  test(`Cancel selection releases a pending decoder without waiting or leaving upload; wrapped=${wrapped}`, async ({ page }) => {
+    await upload(page, wrapped ? 'wrapped-chooser.zip' : 'chooser.zip');
+    await page.evaluate(() => {
+      HTMLImageElement.prototype.decode = function () { return new Promise<void>(() => {}); };
+    });
+    await page.getByRole('button', { name: wrapped ? 'quiz/A revision.JSON' : 'A revision.json', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).created.length)).toBe(1);
+    await page.getByRole('button', { name: 'Cancel selection' }).click();
+    await expect(page.getByRole('heading', { name: 'Load Quiz File' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Choose a quiz' })).toHaveCount(0);
+    expect(await page.evaluate(() => (window as any).revoked.includes((window as any).created[0]))).toBe(true);
   });
-  await page.getByRole('button', { name: 'A revision.json', exact: true }).click();
-  await expect.poll(() => page.evaluate(() => (window as any).created.length)).toBe(1);
-  await page.getByRole('button', { name: 'Cancel selection' }).click();
-  await expect(page.getByRole('heading', { name: 'Load Quiz File' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Choose a quiz' })).toHaveCount(0);
-  expect(await page.evaluate(() => (window as any).revoked.includes((window as any).created[0]))).toBe(true);
-});
+}
 
 for (const [name, error] of [
   ['oversized-frame.gif.zip', '20 megapixels'],
