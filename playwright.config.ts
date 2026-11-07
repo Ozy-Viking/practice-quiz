@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const port = Number(process.env.QUIZ_TEST_PORT ?? 8081);
+const baseURL = `http://127.0.0.1:${port}/practice-quiz/`;
+
 /**
  * Read environment variables from file.
  * https://github.com/motdotla/dotenv
@@ -26,7 +29,7 @@ export default defineConfig({
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Base URL to use in actions like `await page.goto('')`. */
-    baseURL: 'http://127.0.0.1:8081/practice-quiz/',
+    baseURL,
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
@@ -72,9 +75,9 @@ export default defineConfig({
 
   /* Run your local dev server before starting the tests */
   webServer: {
-    command: 'dx serve --web --addr 127.0.0.1 --port 8081 --open false --watch false --hot-reload false',
-    url: 'http://127.0.0.1:8081/practice-quiz/',
-    reuseExistingServer: !process.env.CI,
+    command: `dx serve --web --addr 127.0.0.1 --port ${port} --open false --watch false --hot-reload false`,
+    url: baseURL,
+    reuseExistingServer: !process.env.CI && !process.env.QUIZ_TEST_PORT,
     timeout: 120_000,
   },
 });

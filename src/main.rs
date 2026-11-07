@@ -1,4 +1,5 @@
 mod components;
+mod import;
 mod model;
 
 use components::{ConfiguringView, QuizView, ResultsView, UploadView};
@@ -127,6 +128,7 @@ fn App() -> Element {
     // The hook owns the listeners until the app unmounts, across every quiz phase.
     #[cfg(target_arch = "wasm32")]
     use_hook(|| std::rc::Rc::new(FileDropGuard::install()));
+    use_context_provider(|| Signal::new(std::rc::Rc::new(import::AssetStore::default())));
     let phase: Signal<AppPhase> = use_signal(|| AppPhase::Upload);
     let quiz: Signal<Option<QuizFile>> = use_signal(|| None);
     let session: Signal<Vec<SessionQuestion>> = use_signal(Vec::new);
@@ -195,7 +197,7 @@ fn App() -> Element {
                     }
                 }
                 h1 { "Practice Quiz" }
-                p { class: "subtitle", "Load a JSON quiz file and test your knowledge" }
+                p { class: "subtitle", "Load a JSON or ZIP quiz and test your knowledge" }
             }
             if current == AppPhase::Upload {
                 UploadView {

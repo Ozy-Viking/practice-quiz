@@ -266,6 +266,7 @@ pub fn ResultsView(
                                             span { class: "study-summary-score", "{choice.score}/{qr.max_score}" }
                                         }
                                         p { class: "study-summary-text", "{qr.text}" }
+                                        super::QuestionImages { images: qr.images.clone() }
                                         div { class: "study-summary-meta",
                                             if let Some(topic) = metadata_value(&meta.topic) {
                                                 span { class: "study-summary-topic", "Topic: {topic}" }
@@ -322,6 +323,7 @@ pub fn ResultsView(
                                 }
                             }
                             p { class: "result-question", "{qr.text}" }
+                            super::QuestionImages { images: qr.images.clone() }
                             p { class: "available-marks", "Available marks: {qr.max_score}" }
                             if !qr.hints.is_empty() {
                                 p { class: "hint-usage",

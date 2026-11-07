@@ -11,11 +11,13 @@ rand = { version = "0.8", features = ["small_rng"] }
 rand_chacha = "=0.3.1"
 regex = "1"
 url = "2"
+zip = { version = "=9.4.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 dioxus-free-icons = { version = "0.10.0", features = ["lucide"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
-web-sys = { version = "0.3", features = ["Window", "Location", "Navigator", "Clipboard", "Storage", "MediaQueryList", "Blob", "BlobPropertyBag", "Url", "Document", "HtmlElement", "HtmlAnchorElement", "Element", "Node", "DragEvent", "DataTransfer", "File"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "Navigator", "Clipboard", "Storage", "MediaQueryList", "Blob", "BlobPropertyBag", "Url", "Document", "HtmlElement", "HtmlAnchorElement", "Element", "Node", "DragEvent", "DataTransfer", "File", "HtmlImageElement", "HtmlDialogElement", "HtmlInputElement"] }
 wasm-bindgen-futures = "0.4"
 wasm-bindgen = "0.2.123"
 js-sys = "0.3.100"

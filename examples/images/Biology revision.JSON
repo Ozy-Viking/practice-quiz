@@ -1,0 +1,44 @@
+{
+  "title": "Image practice",
+  "questions": [
+    {
+      "id": "mc",
+      "question": "Which shape is teal?",
+      "correct_answers": [
+        "Rectangle"
+      ],
+      "incorrect_answers": [
+        "Circle"
+      ],
+      "hints": [
+        "Look at the left shape."
+      ],
+      "images": [
+        {
+          "src": "shapes.png",
+          "alt": "A teal rectangle and an orange circle",
+          "caption": "Two coloured shapes"
+        },
+        {
+          "src": "figures/week 1/形.jpg",
+          "alt": "The same shapes as a photograph"
+        }
+      ]
+    },
+    {
+      "id": "sa",
+      "type": "short_answer",
+      "question": "Describe the two shapes.",
+      "marks": 3,
+      "hints": [
+        "Mention colour and shape."
+      ],
+      "images": [
+        {
+          "src": "shapes.png",
+          "alt": "A teal rectangle beside an orange circle"
+        }
+      ]
+    }
+  ]
+}

@@ -3,6 +3,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct QuizFile {
+    #[serde(skip)]
+    pub source_manifest: Option<String>,
     #[serde(default)]
     pub title: String,
     #[serde(default)]
@@ -81,8 +83,27 @@ fn deserialize_marks<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f6
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct QuizImage {
+    pub src: String,
+    pub alt: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_caption"
+    )]
+    pub caption: Option<String>,
+}
+
+fn deserialize_caption<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(d).map(Some)
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(try_from = "QuestionInput")]
 pub struct QuizQuestion {
+    #[serde(default)]
+    pub images: Vec<QuizImage>,
     pub id: String,
     pub question: String,
     #[serde(default, rename = "type")]
@@ -107,6 +128,8 @@ pub struct QuizQuestion {
 // MCQs retain their required option arrays; short answers may omit them.
 #[derive(Deserialize)]
 struct QuestionInput {
+    #[serde(default)]
+    images: Vec<QuizImage>,
     id: String,
     question: String,
     #[serde(default, rename = "type")]
@@ -151,6 +174,7 @@ impl TryFrom<QuestionInput> for QuizQuestion {
             ));
         }
         Ok(Self {
+            images: input.images,
             id: input.id,
             question: input.question,
             kind: input.kind,
@@ -207,6 +231,7 @@ fn has_metadata_value(value: &Option<String>) -> bool {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionQuestion {
+    pub images: Vec<QuizImage>,
     pub id: String,
     pub text: String,
     pub kind: QuestionType,
@@ -273,6 +298,7 @@ pub enum ResultDetails {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct QuestionResult {
+    pub images: Vec<QuizImage>,
     pub id: String,
     pub text: String,
     pub status: QuestionStatus,
@@ -296,6 +322,7 @@ pub type ResultsData = (Vec<QuestionResult>, f64, f64);
 
 #[derive(Serialize)]
 struct QuestionExport<'a> {
+    images: &'a [QuizImage],
     id: &'a str,
     text: &'a str,
     status: QuestionStatus,
@@ -348,6 +375,7 @@ impl<'a> QuestionExport<'a> {
             },
         };
         Self {
+            images: &result.images,
             id: &result.id,
             text: &result.text,
             status: result.status,
@@ -366,6 +394,7 @@ struct ResultsExport<'a> {
     format_version: u32,
     quiz_title: String,
     source_file: &'a str,
+    source_manifest: &'a Option<String>,
     seed: u32,
     config: QuizConfig,
     question_count: usize,
@@ -396,7 +425,8 @@ pub fn results_json(
         ));
     }
     serde_json::to_string_pretty(&ResultsExport {
-        format_version: 3,
+        format_version: 4,
+        source_manifest: &quiz.source_manifest,
         quiz_title: quiz.display_title(),
         source_file,
         seed,
@@ -463,6 +493,15 @@ pub fn validate_quiz(quiz: &QuizFile) -> Result<(), String> {
     let mut ids = HashSet::new();
     let mut total_marks = 0.0_f64;
     for q in &quiz.questions {
+        for image in &q.images {
+            if image.src.trim().is_empty() || image.alt.trim().is_empty() {
+                return Err(format!(
+                    "Question {} image src and alt must be nonblank",
+                    q.id
+                ));
+            }
+            crate::import::image_source(&image.src)?;
+        }
         if !ids.insert(&q.id) {
             return Err(format!("Duplicate question id: {}", q.id));
         }
@@ -603,6 +642,7 @@ pub fn build_session(
                 .map(|(i, (_, text))| (format!("opt_{i}"), option_label(i), text.clone()))
                 .collect();
             SessionQuestion {
+                images: q.images,
                 id: q.id,
                 text: q.question,
                 kind: q.kind,
@@ -725,6 +765,7 @@ pub fn build_results(
                 QuestionStatus::AnsweredUnmarked
             };
             results.push(QuestionResult {
+                images: sq.images.clone(),
                 id: sq.id.clone(),
                 text: sq.text.clone(),
                 status,
@@ -774,6 +815,7 @@ pub fn build_results(
         total_score += score;
         total_max += max;
         results.push(QuestionResult {
+            images: sq.images.clone(),
             id: sq.id.clone(),
             text: sq.text.clone(),
             status,
@@ -804,6 +846,7 @@ mod tests {
 
     fn sample_quiz() -> QuizFile {
         QuizFile {
+            source_manifest: None,
             title: "Test Quiz".into(),
             config: QuizConfig {
                 marks_per_question: 2.0,
@@ -816,6 +859,7 @@ mod tests {
             negative_marks: None,
             questions: vec![
                 QuizQuestion {
+                    images: Vec::new(),
                     kind: QuestionType::MultipleChoice,
                     marks: None,
                     hints: vec![],
@@ -834,6 +878,7 @@ mod tests {
                     },
                 },
                 QuizQuestion {
+                    images: Vec::new(),
                     kind: QuestionType::MultipleChoice,
                     marks: None,
                     hints: vec![],
@@ -852,6 +897,7 @@ mod tests {
                     },
                 },
                 QuizQuestion {
+                    images: Vec::new(),
                     kind: QuestionType::MultipleChoice,
                     marks: None,
                     hints: vec![],
@@ -897,7 +943,7 @@ mod tests {
         let text = results_json(&quiz, "input\\quiz.json", 42, &session, &results).unwrap();
         let exported: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert!(text.contains("\n  \"format_version\""));
-        assert_eq!(exported["format_version"], 3);
+        assert_eq!(exported["format_version"], 4);
         assert_eq!(exported["quiz_title"], quiz.title);
         assert_eq!(exported["source_file"], "input\\quiz.json");
         assert_eq!(exported["seed"], 42);
@@ -972,9 +1018,10 @@ mod tests {
     }
 
     #[test]
-    fn export_v3_retains_all_options_and_classifies_labels() {
+    fn export_v4_retains_all_options_and_classifies_labels() {
         let quiz = sample_quiz();
         let session = vec![SessionQuestion {
+            images: Vec::new(),
             kind: QuestionType::MultipleChoice,
             marks: 2.0,
             hints: vec![],
@@ -1037,7 +1084,7 @@ mod tests {
             assert_eq!(
                 json["questions"][0],
                 serde_json::json!(
-                    { "id" : "q1", "type" : "multiple_choice", "hints" : [],
+                    { "id" : "q1", "type" : "multiple_choice", "hints" : [], "images": [],
                     "hints_viewed" : false, "viewed_hint_indices" : [], "text" :
                     "Which numbers are even?", "status" : status, "score" : score,
                     "max_score" : 2.0, "answers" : { "a" : "2", "b" : "4", "c" : "3", "d"
@@ -1564,7 +1611,7 @@ mod tests {
             &results_json(&quiz, "mixed.json", 42, &session, &results).unwrap(),
         )
         .unwrap();
-        assert_eq!(json["format_version"], 3);
+        assert_eq!(json["format_version"], 4);
         assert_eq!(json["total_available_marks"], 8.75);
         assert_eq!(json["scored_question_count"], 1);
         assert_eq!(json["question_count"], 3);

@@ -1,7 +1,9 @@
+use crate::import::{self, AssetStore, ImportSource};
 use crate::model::*;
 use dioxus::html::{FileData, HasFileData};
 use dioxus::prelude::*;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 const SCHEMA_JSON: &str = include_str!("../../assets/quiz-schema.json");
 
@@ -72,20 +74,37 @@ fn copy_to_clipboard(text: String, mut copied: Signal<bool>) {
     });
 }
 
-async fn read_quiz_file(file: &FileData) -> Result<String, String> {
+async fn read_quiz_file(file: &FileData) -> Result<Vec<u8>, String> {
     #[cfg(target_arch = "wasm32")]
     {
         use dioxus::web::WebFileExt;
-        let file = file.get_web_file().ok_or("Browser file unavailable")?;
-        wasm_bindgen_futures::JsFuture::from(file.text())
+        let web_file = file.get_web_file().ok_or("Browser file unavailable")?;
+        let limit = if file.name().to_ascii_lowercase().ends_with(".zip") {
+            import::ZIP_LIMIT
+        } else {
+            import::JSON_LIMIT
+        };
+        if web_file.size() > limit as f64 {
+            return Err(format!("Upload exceeds {} MiB", limit / 1024 / 1024));
+        }
+        let buffer = wasm_bindgen_futures::JsFuture::from(web_file.array_buffer())
             .await
-            .map_err(|error| format!("{error:?}"))?
-            .as_string()
-            .ok_or_else(|| "File did not contain text".into())
+            .map_err(|e| format!("{e:?}"))?;
+        Ok(js_sys::Uint8Array::new(&buffer).to_vec())
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        file.read_string().await.map_err(|error| error.to_string())
+        file.read_bytes()
+            .await
+            .map(|b| b.to_vec())
+            .map_err(|e| e.to_string())
+    }
+}
+
+fn cancel_pending(mut pending_task: Signal<Option<dioxus::core::Task>>) {
+    let task = pending_task.write().take();
+    if let Some(task) = task {
+        task.cancel();
     }
 }
 
@@ -175,6 +194,10 @@ pub fn UploadView(
     mut seed_input: Signal<String>,
     mut active_seed: Signal<u32>,
 ) -> Element {
+    let mut assets = use_context::<Signal<Rc<AssetStore>>>();
+    let mut pending_task = use_signal(|| None::<dioxus::core::Task>);
+    let mut pending = use_signal(|| None::<(String, ImportSource, u64)>);
+    let mut loading = use_signal(|| false);
     let mut dragging = use_signal(|| false);
     let mut drag_depth = use_signal(|| 0usize);
     let mut upload_generation = use_signal(|| 0u64);
@@ -195,43 +218,29 @@ pub fn UploadView(
         &schema["definitions"]["QuizQuestion"]["properties"],
         &["id", "question"],
     );
+    let image_fields = fields_from_props(
+        &schema["definitions"]["QuizImage"]["properties"],
+        &["src", "alt"],
+    );
     let metadata_fields = fields_from_props(
         &schema["definitions"]["QuestionMetadata"]["properties"],
         &[],
     );
-    let mut upload = move |files: Vec<FileData>| {
-        if files.is_empty() {
-            return;
-        }
-        dragging.set(false);
-        drag_depth.set(0);
-        let generation = *upload_generation.peek() + 1;
-        upload_generation.set(generation);
-        if files.len() != 1 {
-            load_error.set("Choose or drop exactly one quiz file at a time.".into());
-            return;
-        }
-        let file = match files.into_iter().next() {
-            Some(f) => f,
-            None => return,
-        };
-        let name = file.name();
-        spawn(async move {
-            let read = read_quiz_file(&file).await;
-            if generation != *upload_generation.peek() {
-                return;
-            }
-            let text = match read {
-                Ok(t) => t,
-                Err(e) => {
-                    load_error.set(format!("Failed to read file: {e}"));
+    let mut finish =
+        move |name: String, source: ImportSource, manifest: Option<String>, generation: u64| {
+            loading.set(true);
+            load_error.set(String::new());
+            let task = spawn(async move {
+                let imported =
+                    import::load(source, manifest, || generation == *upload_generation.peek())
+                        .await;
+                if generation != *upload_generation.peek() {
                     return;
                 }
-            };
-            let parsed: Result<QuizFile, _> = serde_json::from_str(&text);
-            match parsed {
-                Ok(q) => match validate_quiz(&q) {
-                    Ok(()) => {
+                pending_task.set(None);
+                loading.set(false);
+                match imported {
+                    Ok((q, new_assets)) => {
                         session.set(Vec::new());
                         selections.set(HashMap::new());
                         hint_usage.set(HashMap::new());
@@ -245,20 +254,68 @@ pub fn UploadView(
                         active_seed.set(0);
                         question_count.set(initial_question_count(&q));
                         file_name.set(name);
+                        assets.set(new_assets);
+                        pending.set(None);
                         quiz.set(Some(q));
                         phase.set(AppPhase::Configuring);
                         load_error.set(String::new());
                     }
-                    Err(msg) => load_error.set(msg),
-                },
-                Err(e) => load_error.set(format!("Invalid JSON: {e}")),
+                    Err(error) => load_error.set(error),
+                }
+            });
+            pending_task.set(Some(task));
+        };
+    let mut upload = move |files: Vec<FileData>| {
+        if files.is_empty() {
+            return;
+        }
+        cancel_pending(pending_task);
+        dragging.set(false);
+        drag_depth.set(0);
+        let generation = *upload_generation.peek() + 1;
+        upload_generation.set(generation);
+        pending.set(None);
+        loading.set(false);
+        load_error.set(String::new());
+        if files.len() != 1 {
+            load_error.set("Choose or drop exactly one quiz file at a time.".into());
+            return;
+        }
+        let file = files.into_iter().next().unwrap();
+        let name = file.name();
+        loading.set(true);
+        let task = spawn(async move {
+            let read = read_quiz_file(&file).await;
+            if generation != *upload_generation.peek() {
+                return;
+            }
+            pending_task.set(None);
+            loading.set(false);
+            match read
+                .map_err(|e| format!("Failed to read file: {e}"))
+                .and_then(|bytes| import::prepare(&name, bytes))
+            {
+                Ok(source) => {
+                    let manifest = if let ImportSource::Archive(archive) = &source {
+                        if archive.candidates.len() > 1 {
+                            pending.set(Some((name, source, generation)));
+                            return;
+                        }
+                        Some(archive.candidates[0].clone())
+                    } else {
+                        None
+                    };
+                    finish(name, source, manifest, generation);
+                }
+                Err(error) => load_error.set(error),
             }
         });
+        pending_task.set(Some(task));
     };
     rsx! {
         div { class: "card upload-card",
             h2 { "Load Quiz File" }
-            p { class: "hint", "Upload a JSON file containing your quiz questions." }
+            p { class: "hint", "Upload a JSON or ZIP file containing your quiz questions." }
             div {
                 class: if dragging() { "upload-drop-target dragging" } else { "upload-drop-target" },
                 ondragenter: move |event: DragEvent| {
@@ -288,7 +345,10 @@ pub fn UploadView(
                         event.prevent_default();
                         let files = event.files();
                         if files.is_empty() {
+                            cancel_pending(pending_task);
                             upload_generation += 1;
+                            pending.set(None);
+                            loading.set(false);
                             load_error
                                 .set(
                                     "Could not read the dropped file. Choose a JSON file instead."
@@ -299,12 +359,50 @@ pub fn UploadView(
                         }
                     }
                 },
-                label { r#for: "quiz-file", "Drop a JSON quiz here, or choose a file" }
+                label { r#for: "quiz-file", "Drop a JSON or ZIP quiz here, or choose a file" }
                 input {
                     id: "quiz-file",
                     r#type: "file",
-                    accept: ".json,application/json",
-                    onchange: move |event: FormEvent| upload(event.files()),
+                    accept: ".json,.zip,application/json,application/zip",
+                    onchange: move |event: FormEvent| {
+                        upload(event.files());
+                        // Selecting the same file again must retry after a failed import.
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            use wasm_bindgen::JsCast;
+                            if let Some(input) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.get_element_by_id("quiz-file")).and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok()) {
+                                input.set_value("");
+                            }
+                        }
+                    },
+                }
+            }
+            if loading() { p { role: "status", "Preparing quiz and images…" } }
+            if let Some((name, source, generation)) = pending.read().clone() {
+                section { aria_label: "Choose a quiz",
+                    h3 { "Choose a quiz" }
+                    if let ImportSource::Archive(archive) = &source {
+                        for candidate in archive.candidates.clone() {
+                            { let name = name.clone(); let source = source.clone();
+                              rsx! { button {
+                                r#type: "button", disabled: loading(),
+                                onclick: move |_| {
+                                    if generation == *upload_generation.peek() && !*loading.peek() {
+                                        finish(name.clone(), source.clone(), Some(candidate.clone()), generation);
+                                    }
+                                },
+                                "{candidate}"
+                              } }
+                            }
+                        }
+                    }
+                    button { r#type: "button", onclick: move |_| {
+                        cancel_pending(pending_task);
+                        upload_generation += 1;
+                        pending.set(None);
+                        loading.set(false);
+                        load_error.set(String::new());
+                    }, "Cancel selection" }
                 }
             }
             if !load_error.read().is_empty() {
@@ -315,7 +413,10 @@ pub fn UploadView(
                     class: "btn btn-secondary",
                     r#type: "button",
                     onclick: move |_| {
+                        cancel_pending(pending_task);
                         upload_generation += 1;
+                        pending.set(None);
+                        loading.set(false);
                         load_error.set(String::new());
                         phase.set(AppPhase::Submitted);
                     },
@@ -342,6 +443,9 @@ pub fn UploadView(
                 }
                 if *show_format.read() {
                     div { class: "format-body",
+                        p { "Images work on both question types. Use HTTPS URLs in JSON, or upload a ZIP with quiz JSON files at its root. A single root JSON loads automatically; with several, choose one by filename. Image paths are relative to the ZIP root: photo.png or figures/week-1/photo.jpg. No images folder is required." }
+                        p { "Limits: JSON 2 MiB; ZIP 50 MiB and 1,000 entries; total uncompressed files 100 MiB; each bundled image 10 MiB and 20 megapixels. PNG, JPEG, GIF and WebP are supported. Hosted images require network access; their hosts receive requests without a referrer." }
+                        p { "Results JSON is an answer record. It preserves image references; keep the original ZIP to view bundled images later." }
                         div { class: "schema-url-row",
                             span { class: "schema-url-label", "JSON Schema" }
                             button {
@@ -385,6 +489,7 @@ pub fn UploadView(
                             { field_ref_section("config", &
                                     config_fields) }
                             {field_ref_section("questions[ ]", &question_fields)}
+                            {field_ref_section("images[ ]", &image_fields)}
                             {field_ref_section("metadata", &metadata_fields)}
                         }
                     }
