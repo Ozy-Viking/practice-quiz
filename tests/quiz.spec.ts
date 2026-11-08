@@ -190,7 +190,7 @@ test('copies and downloads the same complete results JSON', async ({ page, conte
   await expect.poll(() => page.evaluate(() => (window as any).revokedExportUrls.length)).toBe(1);
 });
 
-test('exports complete answer mappings for partial answers and an unanswered shuffled rerun', async ({ page }) => {
+test('reviews and exports every option for partial answers and an unanswered shuffled rerun', async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -219,6 +219,21 @@ test('exports complete answer mappings for partial answers and an unanswered shu
     await page.locator('.option-btn').filter({ has: page.getByText(answer, { exact: true }) }).click();
   }
   await page.getByRole('button', { name: /Submit Answers/ }).click();
+  const review = page.getByRole('list', { name: 'All answer options' });
+  const rows = review.getByRole('listitem');
+  await expect(rows.locator('.answer-text')).toHaveText(original.options as string[]);
+  await expect(rows.locator('.answer-label')).toHaveText(['A', 'B', 'C', 'D']);
+  for (const text of ['2', '3', '4', '5']) {
+    const row = rows.filter({ has: page.getByText(text, { exact: true }) });
+    await expect(row.getByRole('img', { name: ['2', '3'].includes(text) ? 'Selected' : 'Not selected', exact: true })).toBeVisible();
+    await expect(row.locator('.review-choice')).toHaveText('');
+    await expect(row.getByText('Correct answer', { exact: true })).toHaveCount(['2', '4'].includes(text) ? 1 : 0);
+    await expect(row.getByText('Incorrect option', { exact: true })).toHaveCount(0);
+    await expect(row).toBeVisible();
+  }
+  await expect(rows.filter({ hasText: 'Missed' }).locator('.answer-text')).toHaveText('4');
+  await expect(rows.filter({ hasText: 'Incorrect selection' }).locator('.answer-text')).toHaveText('3');
+  await expect(rows.filter({ has: page.getByText('5', { exact: true }) }).locator('.review-outcome')).toHaveCount(0);
   await page.getByRole('button', { name: 'Copy Results JSON' }).click();
   await expect(page.locator('.results-export').getByRole('status')).toHaveText('Results JSON copied to clipboard.');
   const partial = JSON.parse(await page.evaluate(() => (window as any).copiedResults as string));
@@ -242,6 +257,14 @@ test('exports complete answer mappings for partial answers and an unanswered shu
   const rerunAnswers = Object.fromEntries(rerun.options.map((text, index) => [String.fromCharCode(97 + index), text]));
   expect(rerun.options).not.toEqual(original.options);
   await page.getByRole('button', { name: /Submit Answers/ }).click();
+  await expect(rows.locator('.answer-text')).toHaveText(rerun.options as string[]);
+  await expect(rows.getByRole('img', { name: 'Not selected', exact: true })).toHaveCount(4);
+  await expect(rows.locator('.review-choice')).toHaveText(Array(4).fill(''));
+  await expect(rows.filter({ hasText: 'Missed' })).toHaveCount(2);
+  await expect(rows.filter({ hasText: 'Incorrect selection' })).toHaveCount(0);
+  for (const text of ['2', '4']) {
+    await expect(rows.filter({ has: page.getByText(text, { exact: true }) }).locator('.review-key-correct')).toHaveText('Correct answer');
+  }
   await page.getByRole('button', { name: 'Copy Results JSON' }).click();
   await expect(page.locator('.results-export').getByRole('status')).toHaveText('Results JSON copied to clipboard.');
   const unanswered = JSON.parse(await page.evaluate(() => (window as any).copiedResults as string));
@@ -260,6 +283,41 @@ test('exports complete answer mappings for partial answers and an unanswered shu
     incorrect: [],
   });
   expect(Object.keys(unanswered.questions[0].answers)).toEqual(['a', 'b', 'c', 'd']);
+});
+
+test('keeps long unselected options readable on mobile in both themes', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const skipped = 'Incorrect option with a long identifier: ' + 'unbroken'.repeat(25) + '\n<b>This stays literal text.</b>';
+  await uploadQuiz(page, {
+    ...trueFalseQuizFixture,
+    questions: [{
+      ...trueFalseQuizFixture.questions[0],
+      correct_answers: ['Correct option'],
+      incorrect_answers: [skipped],
+    }],
+  });
+  await page.getByRole('button', { name: /Start Quiz/ }).click();
+  await page.locator('.option-btn').filter({ has: page.getByText('Correct option', { exact: true }) }).click();
+  await page.getByRole('button', { name: /Submit Answers/ }).click();
+  const row = page.locator('.answer-review-row').filter({ hasText: 'Incorrect option with a long identifier:' });
+  for (const theme of ['dark', 'light']) {
+    const app = page.locator('#app');
+    if (!(await app.getAttribute('class'))?.includes(`theme-${theme}`)) {
+      await page.getByRole('switch', { name: /Switch to .* mode/ }).click();
+    }
+    await expect(app).toHaveClass(`theme-${theme}`);
+    await expect(row.locator('.answer-text')).toHaveText(skipped);
+    await expect(row.locator('.answer-text b')).toHaveCount(0);
+    await expect(row.getByRole('img', { name: 'Not selected', exact: true })).toBeVisible();
+    await expect(row.locator('.review-choice')).toHaveText('');
+    await expect(row.locator('.review-key')).toBeEmpty();
+    await expect(row.locator('.review-field-label').first()).toBeVisible();
+    const textBounds = await row.locator('.answer-text').boundingBox();
+    const rowBounds = await row.boundingBox();
+    expect(textBounds!.x + textBounds!.width).toBeLessThanOrEqual(rowBounds!.x + rowBounds!.width);
+    const fits = await row.evaluate(element => element.scrollWidth <= element.clientWidth);
+    expect(fits).toBe(true);
+  }
 });
 
 test('reports clipboard and download failures honestly and allows retry', async ({ page }) => {
