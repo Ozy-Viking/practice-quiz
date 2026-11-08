@@ -50,19 +50,19 @@ Use either a field's canonical name or its alias, never both.
 
 | Image field | Required? | Meaning |
 |---|---|---|
-| `src` | Yes | Absolute HTTPS URL without credentials, or an exact, case-sensitive path relative to the ZIP root. Replace illustrative `example.org` URLs with public image URLs. |
+| `src` | Yes | Absolute HTTPS URL without credentials, or an exact, case-sensitive path relative to the detected package root: the ZIP root or its one enclosing quiz folder. Replace illustrative `example.org` URLs with public image URLs. |
 | `alt` | Yes | Nonblank alternative text describing the image. |
 | `caption` | No | Plain-text caption below the image. |
 
 | Upload | Requirements |
 |---|---|
 | JSON | Image sources must be HTTPS URLs; hosts must allow embedding. |
-| ZIP | Quiz JSON files go at the archive root; choose one if several exist. May mix HTTPS URLs and bundled PNG, JPEG, GIF or WebP images. Local paths cannot use absolute paths, backslashes, colons, empty segments or `.` / `..`. |
+| ZIP | Quiz JSON files go at the archive root or directly inside one enclosing folder; choose one if several exist at the detected package root. May mix HTTPS URLs and bundled PNG, JPEG, GIF or WebP images. Local paths cannot use absolute paths, backslashes, colons, empty segments or `.` / `..`. |
 | Limits | JSON: 2 MiB. ZIP: 50 MiB, 1,000 entries, 100 MiB total uncompressed. Each bundled image: 10 MiB and 20 megapixels; expanded PNG metadata: 8 MiB per image. |
 
 ### ZIP structure
 
-A ZIP bundles the quiz JSON and its local images into one upload. Put the JSON directly at the archive root, without an enclosing folder:
+A ZIP bundles the quiz JSON and its local images into one upload. You can compress the folder's contents, putting JSON directly at the archive root:
 
 ```text
 biology.zip
@@ -74,9 +74,29 @@ biology.zip
     └── cells.png
 ```
 
-In `quiz.json`, use `"src": "chloroplast.png"` for the root image, `"src": "quiz/leaf.jpg"` for the image in the folder matching the quiz filename, or `"src": "images/cells.png"` for the image in the `images` folder. Paths are case-sensitive and relative to the ZIP root. Folder names are your choice; neither `quiz` nor `images` is required.
+In this layout, `quiz.json` uses `"src": "chloroplast.png"`, `"src": "quiz/leaf.jpg"`, or `"src": "images/cells.png"`. Paths are case-sensitive and relative to the ZIP root. Folder names are your choice; neither `quiz` nor `images` is required.
 
-A single root JSON file loads automatically. If you include several root JSON files, the app asks which one to load; they can share bundled images. When creating the ZIP, select the JSON and image folders together so the JSON stays at the root.
+You can also compress the quiz folder itself, keeping one enclosing folder:
+
+```text
+quiz.zip
+└── quiz/
+    ├── quiz.json
+    └── images/
+        └── a/
+            └── b/
+                └── c/
+                    └── d/
+                        └── image.png
+```
+
+Here the package root is `quiz/`, so `quiz.json` uses `"src": "images/a/b/c/d/image.png"`. Do not include the enclosing `quiz/` prefix in `src`. Image subfolders can be nested arbitrarily; the one-folder limit applies only to quiz JSON discovery. `outer/quiz/quiz.json` is too deep.
+
+Try the [wrapped sample ZIP](examples/images/wrapped-image-practice.zip) for a complete package with both question types and bundled images.
+
+If archive-root JSON files exist, they are the only quiz candidates. The app does not fall back to an enclosing folder when a root JSON file is invalid. Otherwise, all non-metadata files must share one enclosing folder, with quiz JSON directly inside it. Substantive files at the archive root or in sibling folders make that enclosing-folder layout unsupported. Empty directory records and recognized macOS metadata (`.DS_Store` and `__MACOSX/` at the archive root or within the enclosing folder) do not affect layout detection; archive validation and limits still apply to every entry.
+
+A single JSON candidate loads automatically. Multiple candidates appear in a sorted “Choose a quiz” list and require an explicit selection; `quiz.json` has no special priority. Only the selected JSON is parsed and validated. If it is invalid, the error is shown and you can select another candidate. JSON files deeper than the detected package root are ignored for quiz selection. All selected quizzes resolve local image paths from that same package root and can share bundled images.
 
 ### Three-question example
 
@@ -164,7 +184,7 @@ Save as `quiz.json` at the root of `biology.zip`, with `cells.png` in its `image
 |---|---|
 | `quiz_title` | Resolved quiz title. |
 | `source_file` | Uploaded filename. |
-| `source_manifest` | Selected root JSON filename for ZIP uploads; `null` for standalone JSON. |
+| `source_manifest` | Exact selected JSON path within the ZIP, such as `quiz.json` or `quiz/quiz.json`; `null` for standalone JSON. |
 | `seed` | Numeric draw seed (`0`–`4294967295`). Matching source order, filters, count and seed reproduce the draw. Reruns may reshuffle the same questions while retaining the original seed. |
 | `config` | Effective quiz settings after top-level overrides. |
 | `question_count` / `scored_question_count` | All questions / MCQs only. |
