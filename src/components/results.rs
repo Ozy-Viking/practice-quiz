@@ -5,6 +5,11 @@ use crate::model::{
 use dioxus::prelude::*;
 use std::collections::HashMap;
 
+/// Shows every multiple-choice option with its selection and answer-key feedback.
+///
+/// `result` must use the same question and option ordering as `question`, because
+/// selections are matched by answer label. Selection indicators retain accessible
+/// names, while correct answers and mistakes receive visible status labels.
 #[component]
 fn AnswerReview(question: SessionQuestion, result: ChoiceResult) -> Element {
     rsx! {
@@ -205,6 +210,11 @@ fn export_results(
     });
 }
 
+/// Displays a completed attempt with scores, study guidance, and answer review.
+///
+/// Choice reviews use matching session questions to preserve the attempt's option
+/// order; short answers remain unmarked. Exports describe the completed attempt,
+/// and rerunning clears its responses, hint usage, and results before restarting.
 #[component]
 pub fn ResultsView(
     mut phase: Signal<AppPhase>,
