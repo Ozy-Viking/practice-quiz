@@ -1,9 +1,77 @@
 use crate::model::{
-    AppPhase, HintUsage, QuestionStatus, QuizFile, QuizQuestion, Responses, ResultDetails,
-    ResultsData, SessionQuestion, results_json, shuffle_session,
+    AppPhase, ChoiceResult, HintUsage, QuestionStatus, QuizFile, QuizQuestion, Responses,
+    ResultDetails, ResultsData, SessionQuestion, results_json, shuffle_session,
 };
 use dioxus::prelude::*;
 use std::collections::HashMap;
+
+#[component]
+fn AnswerReview(question: SessionQuestion, result: ChoiceResult) -> Element {
+    rsx! {
+        div { class: "result-details answer-review",
+            h3 { "All answer options" }
+            p { class: "answer-review-help", "Compare your selections with the answer key." }
+            div { class: "answer-review-columns", aria_hidden: "true",
+                span { "Option" }
+                span { "Your answer" }
+                span { "Answer key" }
+            }
+            ol { class: "answer-review-list", role: "list", aria_label: "All answer options",
+                for (id, label, text) in &question.options {
+                    {
+                        let selected = result.selected_answers.iter().any(|(l, _)| l == label);
+                        let correct = question.correct_ids.contains(id);
+                        let state = match (selected, correct) {
+                            (true, true) => "review-correct",
+                            (false, true) => "review-missed",
+                            (true, false) => "review-wrong",
+                            (false, false) => "review-skipped",
+                        };
+                        rsx! {
+                            li { class: "answer-review-row {state}", key: "{id}",
+                                div { class: "answer-review-option",
+                                    span { class: "answer-label", "{label}" }
+                                    span { class: "answer-text", "{text}" }
+                                }
+                                div { class: "review-selection",
+                                    span { class: "review-field-label", "Your answer: " }
+                                    span { class: if selected { "review-choice is-selected" } else { "review-choice" },
+                                        role: "img",
+                                        aria_label: if selected { "Selected" } else { "Not selected" },
+                                        svg {
+                                            class: "review-checkbox",
+                                            width: "16", height: "16", view_box: "0 0 16 16",
+                                            fill: "none", stroke: "currentColor", stroke_width: "1.5",
+                                            "aria-hidden": "true",
+                                            rect { x: "1.5", y: "1.5", width: "13", height: "13", rx: "3" }
+                                            if selected {
+                                                path { d: "m4.5 8 2.25 2.25 4.75-4.75", stroke_linecap: "round", stroke_linejoin: "round" }
+                                            }
+                                        }
+                                    }
+                                }
+                                div { class: "review-key",
+                                    if correct || selected {
+                                        span { class: "review-field-label", "Answer key: " }
+                                    }
+                                    if correct {
+                                        span { class: "review-key-correct", "Correct answer" }
+                                    }
+                                    if !selected && correct {
+                                        span { class: "review-outcome", "Missed" }
+                                    } else if selected && !correct {
+                                        span { class: "review-outcome", "Incorrect selection" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn metadata_value(value: &Option<String>) -> Option<&str> {
     value.as_deref().filter(|v| !v.trim().is_empty())
 }
@@ -337,61 +405,10 @@ pub fn ResultsView(
                             if let ResultDetails::ShortAnswer { response } = &qr.details {
                                 div { class: "short-answer-response", "{response}" }
                             }
-                            if let Some(choice) = qr.choice() {
-                                div { class: "result-details",
-                                    if !choice.correct_answers.is_empty() {
-                                        div { class: "detail-row correct-row",
-                                            span { class: "detail-label", "Correct:" }
-                                            div { class: "detail-values",
-                                                for (label, text) in choice.correct_answers.iter() {
-                                                    div { class: "answer-entry badge-correct",
-                                                        span { class: "answer-label", "{label}" }
-                                                        span { class: "answer-text", "{text}" }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if !choice.missed_correct_answers.is_empty() {
-                                        div { class: "detail-row missed-row",
-                                            span { class: "detail-label", "Missed:" }
-                                            div { class: "detail-values",
-                                                for (label, text) in choice.missed_correct_answers.iter() {
-                                                    div { class: "answer-entry badge-missed",
-                                                        span { class: "answer-label", "{label}" }
-                                                        span { class: "answer-text", "{text}" }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if !choice.wrong_selected_answers.is_empty() {
-                                        div { class: "detail-row wrong-row",
-                                            span { class: "detail-label", "Wrong:" }
-                                            div { class: "detail-values",
-                                                for (label, text) in choice.wrong_selected_answers.iter() {
-                                                    div { class: "answer-entry badge-wrong",
-                                                        span { class: "answer-label", "{label}" }
-                                                        span { class: "answer-text", "{text}" }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if !choice.selected_answers.is_empty() {
-                                        div { class: "detail-row selected-row",
-                                            span { class: "detail-label", "You chose:" }
-                                            div { class: "detail-values",
-                                                for (label, text) in choice.selected_answers.iter() {
-                                                    div { class: "answer-entry badge-selected",
-                                                        span { class: "answer-label", "{label}" }
-                                                        span { class: "answer-text", "{text}" }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                            if let Some(choice) = qr.choice()
+                                && let Some(question) = session.read().iter().find(|q| q.id == qr.id)
+                            {
+                                AnswerReview { question: question.clone(), result: choice.clone() }
                             }
                             {
                                 let meta = &qr.metadata;
