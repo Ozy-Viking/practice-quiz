@@ -7,7 +7,7 @@ const grouped = {
   title: 'Multipart regression',
   questions: [
     { id: 'parent"<>', type: 'group', question: prompt,
-      metadata: { topic: 'Parent topic', study_location: 'Parent location' }, explanation: 'Shared explanation exactly once.',
+      metadata: { topic: 'Parent topic', study_location: 'Parent location', timestamp: 'LECTURE-00:42', answer: 'SHARED-ANSWER-KEY' }, explanation: 'Shared explanation exactly once.',
       subquestions: [
         { id: 'a', type: 'short_answer', question: 'State the goal.', marks: 1, hints: ['Part a hint'] },
         { id: 'b', type: 'short_answer', question: 'Explain replay.', marks: 1 },
@@ -47,6 +47,7 @@ test.beforeEach(async ({ page }) => {
 
 test('four accessible independent textareas preserve edits, literal whitespace, and partial completion', async ({ page }) => {
   await start(page);
+  await expect(page.getByText(/SHARED-ANSWER-KEY|LECTURE-00:42/)).toHaveCount(0);
   await expect(page.locator('.group-context')).toHaveCount(1);
   await expect(page.locator('.multipart-card')).toHaveCount(1);
   await expect(page.locator('.multipart-card > .question-block')).toHaveCount(4);
@@ -67,6 +68,10 @@ test('four accessible independent textareas preserve edits, literal whitespace, 
   await expect(page.locator('.score-banner')).toHaveCount(0);
   await expect(page.getByText('Total available marks: 6')).toBeVisible();
   await expect(page.getByText('Explanation: Shared explanation exactly once.', { exact: true })).toHaveCount(1);
+  await expect(page.getByText('Timestamp: LECTURE-00:42', { exact: true })).toHaveCount(1);
+  await expect(page.getByText('Original answer key: SHARED-ANSWER-KEY', { exact: true })).toHaveCount(1);
+  await expect(page.locator('.result-group-context').getByText('Timestamp: LECTURE-00:42', { exact: true })).toBeVisible();
+  await expect(page.locator('.result-group-context').getByText('Original answer key: SHARED-ANSWER-KEY', { exact: true })).toBeVisible();
   await expect(page.locator('.multipart-card')).toHaveCount(1);
   await expect(page.locator('.multipart-card > .result-block')).toHaveCount(4);
   const json = await exported(page);
