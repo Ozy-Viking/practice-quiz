@@ -16,6 +16,23 @@ class SchemaTests(unittest.TestCase):
     def setUp(self):
         self.validator = Draft7Validator(SCHEMA)
 
+    def test_multipart_example_and_invalid_shapes(self):
+        from copy import deepcopy
+        quiz = json.loads((Path(__file__).resolve().parents[1] / 'examples/authentication/quiz.json').read_text())
+        self.assertTrue(self.validator.is_valid(quiz))
+        for field in ['marks', 'hints', 'correct_answers', 'correctAnswers', 'incorrect_answers', 'incorrectAnswers']:
+            bad = deepcopy(quiz)
+            bad['questions'][0][field] = 1 if field == 'marks' else []
+            self.assertFalse(self.validator.is_valid(bad), field)
+        for parts in [None, [], [None], [quiz['questions'][0]]]:
+            bad = deepcopy(quiz)
+            bad['questions'][0]['subquestions'] = parts
+            self.assertFalse(self.validator.is_valid(bad))
+        for value in [None, []]:
+            bad = deepcopy(quiz)
+            bad['questions'][0]['subquestions'][0]['subquestions'] = value
+            self.assertFalse(self.validator.is_valid(bad))
+
     def test_hint_whitespace(self):
         # Rust char::is_whitespace, also checked exhaustively against trim() in Rust.
         whitespace = '\t\n\v\f\r \u0085\u00a0\u1680' + ''.join(map(chr, range(0x2000, 0x200B))) + '\u2028\u2029\u202f\u205f\u3000'

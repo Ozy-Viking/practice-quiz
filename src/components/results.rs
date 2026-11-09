@@ -1,6 +1,7 @@
 use crate::model::{
-    AppPhase, ChoiceResult, HintUsage, QuestionStatus, QuizFile, QuizQuestion, Responses,
-    ResultDetails, ResultsData, SessionQuestion, results_json, shuffle_session,
+    AppPhase, ChoiceResult, HintUsage, QuestionStatus, QuestionType, QuizFile, QuizQuestion,
+    Responses, ResultDetails, ResultsData, SessionQuestion, find_leaf, results_json,
+    session_leaves, shuffle_session,
 };
 use dioxus::prelude::*;
 use std::collections::HashMap;
@@ -244,6 +245,8 @@ pub fn ResultsView(
     } else {
         0
     };
+    let session_read = session.read();
+    let leaves = session_leaves(&session_read);
     let study_items: Vec<_> = res_list
         .iter()
         .enumerate()
@@ -335,12 +338,14 @@ pub fn ResultsView(
                     div { class: "study-summary-list",
                         for (idx, qr) in study_items {
                             {
-                                let meta = &qr.metadata;
+                                let leaf = &leaves[idx];
+                                let display_meta = leaf.display_metadata();
+                                let meta = &display_meta;
                                 let choice = qr.choice().unwrap();
                                 rsx! {
                                     div { class: "study-summary-item",
                                         div { class: "study-summary-topline",
-                                            a { class: "study-summary-question", href: "#result-q-{idx + 1}", "Q{idx + 1}: {qr.id}" }
+                                            a { class: "study-summary-question", href: "#result-q-{leaf.path()}", "{leaf.label()}: {qr.id}" }
                                             span { class: "study-summary-score", "{choice.score}/{qr.max_score}" }
                                         }
                                         p { class: "study-summary-text", "{qr.text}" }
@@ -369,86 +374,107 @@ pub fn ResultsView(
                     }
                 }
             }
-            for (idx, qr) in res_list.iter().enumerate() {
-                {
-                    let status_class = match qr.status {
-                        QuestionStatus::Correct => "status-correct",
-                        QuestionStatus::PartiallyCorrect => "status-partial",
-                        QuestionStatus::Incorrect => "status-incorrect",
-                        QuestionStatus::Unanswered => "status-unanswered",
-                        QuestionStatus::AnsweredUnmarked | QuestionStatus::UnansweredUnmarked => {
-                            "status-unmarked"
+            for (top, parent) in session_read.iter().enumerate() {
+                div {
+                    key: "{parent.id}",
+                    class: if parent.kind == QuestionType::Group { "multipart-card" } else { "standalone-question" },
+                    if parent.kind == QuestionType::Group {
+                        div { class: "group-context result-group-context",
+                            div { class: "question-number", "Q{top + 1} · {parent.subquestions.len()} parts" }
+                            p { class: "question-text", "{parent.text}" }
+                            super::QuestionImages { images: parent.images.clone() }
+                            p { class: "available-marks", "Available marks: {parent.marks} across all parts" }
+                            if let Some(explanation) = metadata_value(&parent.metadata.explanation) {
+                                p { class: "study-notes", "Explanation: {explanation}" }
+                            }
+                            if let Some(notes) = metadata_value(&parent.metadata.notes) {
+                                p { class: "study-notes", "Notes: {notes}" }
+                            }
                         }
-                    };
-                    let status_text = match qr.status {
-                        QuestionStatus::Correct => "Correct",
-                        QuestionStatus::PartiallyCorrect => "Partial",
-                        QuestionStatus::Incorrect => "Incorrect",
-                        QuestionStatus::Unanswered => "Unanswered",
-                        QuestionStatus::AnsweredUnmarked => "Answered — unmarked",
-                        QuestionStatus::UnansweredUnmarked => "Unanswered — unmarked",
-                    };
-                    rsx! {
-                        div {
-                            class: "result-block {status_class}",
-                            key: "{qr.id}",
-                            id: "result-q-{idx + 1}",
-                            div { class: "result-header",
-                                span { class: "result-number", "Q{idx + 1}" }
-                                span { class: "result-badge {status_class}", "{status_text}" }
-                                if let Some(choice) = qr.choice() {
-                                    span { class: "result-score", "{choice.score}/{qr.max_score}" }
+                    }
+                    for (idx, qr) in res_list.iter().enumerate().filter(|(idx, _)| leaves[*idx].top == top) {
+                        {
+                            let leaf = &leaves[idx];
+                            let status_class = match qr.status {
+                                QuestionStatus::Correct => "status-correct",
+                                QuestionStatus::PartiallyCorrect => "status-partial",
+                                QuestionStatus::Incorrect => "status-incorrect",
+                                QuestionStatus::Unanswered => "status-unanswered",
+                                QuestionStatus::AnsweredUnmarked | QuestionStatus::UnansweredUnmarked => {
+                                    "status-unmarked"
                                 }
-                            }
-                            p { class: "result-question", "{qr.text}" }
-                            super::QuestionImages { images: qr.images.clone() }
-                            p { class: "available-marks", "Available marks: {qr.max_score}" }
-                            if !qr.hints.is_empty() {
-                                p { class: "hint-usage",
-                                    if qr.viewed_hint_indices.is_empty() {
-                                        "No hints viewed"
-                                    } else {
-                                        "Hints viewed: {qr.viewed_hint_indices.len()} of {qr.hints.len()}"
+                            };
+                            let status_text = match qr.status {
+                                QuestionStatus::Correct => "Correct",
+                                QuestionStatus::PartiallyCorrect => "Partial",
+                                QuestionStatus::Incorrect => "Incorrect",
+                                QuestionStatus::Unanswered => "Unanswered",
+                                QuestionStatus::AnsweredUnmarked => "Answered — unmarked",
+                                QuestionStatus::UnansweredUnmarked => "Unanswered — unmarked",
+                            };
+                            rsx! {
+                                div {
+                                    class: "result-block {status_class}",
+                                    id: "result-q-{leaf.path()}",
+                                    div { class: "result-header",
+                                        span { class: "result-number", "{leaf.label()}" }
+                                        span { class: "result-badge {status_class}", "{status_text}" }
+                                        if let Some(choice) = qr.choice() {
+                                            span { class: "result-score", "{choice.score}/{qr.max_score}" }
+                                        }
                                     }
-                                }
-                            }
-                            if let ResultDetails::ShortAnswer { response } = &qr.details {
-                                div { class: "short-answer-response", "{response}" }
-                            }
-                            if let Some(choice) = qr.choice()
-                                && let Some(question) = session.read().iter().find(|q| q.id == qr.id)
-                            {
-                                AnswerReview { question: question.clone(), result: choice.clone() }
-                            }
-                            {
-                                let meta = &qr.metadata;
-                                let has_meta = meta.has_content();
-                                if has_meta {
-                                    rsx! {
-                                        div { class: "study-info",
-                                            div { class: "study-info-header", "Study Info" }
-                                            if let Some(loc) = metadata_value(&meta.study_location) {
-                                                p { class: "study-location", "Location: {loc}" }
-                                            }
-                                            if let Some(timestamp) = metadata_value(&meta.timestamp) {
-                                                p { class: "study-location", "Timestamp: {timestamp}" }
-                                            }
-                                            if let Some(topic) = metadata_value(&meta.topic) {
-                                                p { class: "study-topic", "Topic: {topic}" }
-                                            }
-                                            if let Some(answer) = metadata_value(&meta.answer) {
-                                                p { class: "study-answer", "Original answer key: {answer}" }
-                                            }
-                                            if let Some(explanation) = metadata_value(&meta.explanation) {
-                                                p { class: "study-notes", "Explanation: {explanation}" }
-                                            } else if let Some(notes) = metadata_value(&meta.notes) {
-                                                p { class: "study-notes", "Notes: {notes}" }
+                                    p { class: "result-question", "{qr.text}" }
+                                    super::QuestionImages { images: qr.images.clone() }
+                                    p { class: "available-marks", "Available marks: {qr.max_score}" }
+                                    if !qr.hints.is_empty() {
+                                        p { class: "hint-usage",
+                                            if qr.viewed_hint_indices.is_empty() {
+                                                "No hints viewed"
+                                            } else {
+                                                "Hints viewed: {qr.viewed_hint_indices.len()} of {qr.hints.len()}"
                                             }
                                         }
                                     }
-                                } else {
-                                    rsx! {
-                                        div {}
+                                    if let ResultDetails::ShortAnswer { response } = &qr.details {
+                                        div { class: "short-answer-response", "{response}" }
+                                    }
+                                    if let Some(choice) = qr.choice()
+                                        && let Some(question) = find_leaf(&session_read, &qr.id)
+                                    {
+                                        AnswerReview { question: question.clone(), result: choice.clone() }
+                                    }
+                                    {
+                                        let display_meta = leaf.display_metadata();
+                                        let meta = &display_meta;
+                                        let has_meta = meta.has_content();
+                                        if has_meta {
+                                            rsx! {
+                                                div { class: "study-info",
+                                                    div { class: "study-info-header", "Study Info" }
+                                                    if let Some(loc) = metadata_value(&meta.study_location) {
+                                                        p { class: "study-location", "Location: {loc}" }
+                                                    }
+                                                    if let Some(timestamp) = metadata_value(&meta.timestamp) {
+                                                        p { class: "study-location", "Timestamp: {timestamp}" }
+                                                    }
+                                                    if let Some(topic) = metadata_value(&meta.topic) {
+                                                        p { class: "study-topic", "Topic: {topic}" }
+                                                    }
+                                                    if let Some(answer) = metadata_value(&meta.answer) {
+                                                        p { class: "study-answer", "Original answer key: {answer}" }
+                                                    }
+                                                    if let Some(explanation) = metadata_value(&meta.explanation) {
+                                                        p { class: "study-notes", "Explanation: {explanation}" }
+                                                    } else if let Some(notes) = metadata_value(&meta.notes) {
+                                                        p { class: "study-notes", "Notes: {notes}" }
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            rsx! {
+                                                div {}
+                                            }
+                                        }
                                     }
                                 }
                             }

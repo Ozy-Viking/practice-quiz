@@ -164,7 +164,7 @@ fn fields_from_props(props: &serde_json::Value, required_names: &[&str]) -> Vec<
             *name != "$schema"
                 && prop["description"]
                     .as_str()
-                    .map_or(true, |d| !d.starts_with("Alias for"))
+                    .is_none_or(|d| !d.starts_with("Alias for"))
         })
         .map(|(name, prop)| FieldRow {
             name: name.clone(),
@@ -443,7 +443,7 @@ pub fn UploadView(
                 }
                 if *show_format.read() {
                     div { class: "format-body",
-                        p { "Images work on both question types. Use HTTPS URLs in JSON, or upload a ZIP with quiz JSON files at its root or inside one enclosing folder. Only JSON files directly in that location are quiz candidates: one loads automatically; with several, choose one from the sorted list. Root JSON files take priority; invalid root quizzes do not fall back to nested ones. Image paths are relative to that same location: photo.png or images/a/b/c/d/image.png. Image folders may be nested deeper. No images folder is required." }
+                        p { "Use type: group for a shared prompt with a nonempty subquestions array. Each part is short_answer or multiple_choice with its own globally unique ID. Groups cannot nest or have parent marks, hints or answer options. Selecting one group includes all parts. Images work on each part and on the shared prompt; all images are centered. Use HTTPS URLs in JSON, or upload a ZIP with quiz JSON files at its root or inside one enclosing folder. Only JSON files directly in that location are quiz candidates: one loads automatically; with several, choose one from the sorted list. Root JSON files take priority; invalid root quizzes do not fall back to nested ones. Image paths are relative to that same location: photo.png or images/a/b/c/d/image.png. Image folders may be nested deeper. No images folder is required." }
                         p { "Limits: JSON 2 MiB; ZIP 50 MiB and 1,000 entries; total uncompressed files 100 MiB; each bundled image 10 MiB and 20 megapixels. PNG, JPEG, GIF and WebP are supported. Hosted images require network access; their hosts receive requests without a referrer." }
                         p { "Results JSON is an answer record. It preserves image references; keep the original ZIP to view bundled images later." }
                         div { class: "schema-url-row",

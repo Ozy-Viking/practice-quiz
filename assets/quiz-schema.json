@@ -77,7 +77,7 @@
 				"question"
 			],
 			"additionalProperties": false,
-			"description": "Multiple-choice or unmarked short-answer question. IDs must be unique within the quiz.",
+			"description": "A multiple-choice question, unmarked short answer, or one-level group. Global ID uniqueness is checked at upload time.",
 			"properties": {
 				"id": {
 					"type": "string",
@@ -131,10 +131,11 @@
 					"type": "string",
 					"enum": [
 						"multiple_choice",
-						"short_answer"
+						"short_answer",
+						"group"
 					],
 					"default": "multiple_choice",
-					"description": "Omit for multiple choice; short_answer accepts unmarked text without answer options."
+					"description": "Omit for multiple choice; short_answer accepts unmarked text; group contains shared context and ordered parts."
 				},
 				"marks": {
 					"type": "number",
@@ -156,74 +157,176 @@
 					"items": {
 						"$ref": "#/definitions/QuizImage"
 					}
+				},
+				"subquestions": {
+					"type": "array",
+					"minItems": 1,
+					"description": "Required on groups only. Selecting a group includes all parts in source order. Each child must be an ordinary leaf question.",
+					"items": {
+						"allOf": [
+							{
+								"$ref": "#/definitions/QuizQuestion"
+							},
+							{
+								"not": {
+									"properties": {
+										"type": {
+											"const": "group"
+										}
+									},
+									"required": [
+										"type"
+									]
+								}
+							}
+						]
+					}
 				}
 			},
 			"allOf": [
-				{ "not": { "required": ["correct_answers", "correctAnswers"] } },
-				{ "not": { "required": ["incorrect_answers", "incorrectAnswers"] } }
-			],
-			"if": {
-				"required": [
-					"type"
-				],
-				"properties": {
-					"type": {
-						"const": "short_answer"
-					}
-				}
-			},
-			"then": {
-				"properties": {
-					"correct_answers": {
-						"maxItems": 0
-					},
-					"incorrect_answers": {
-						"maxItems": 0
-					},
-					"correctAnswers": {
-						"maxItems": 0
-					},
-					"incorrectAnswers": {
-						"maxItems": 0
-					}
-				}
-			},
-			"else": {
-				"oneOf": [
-					{
+				{
+					"not": {
 						"required": [
 							"correct_answers",
-							"incorrect_answers"
+							"correctAnswers"
 						]
-					},
-					{
+					}
+				},
+				{
+					"not": {
 						"required": [
-							"correct_answers",
-							"incorrectAnswers"
-						]
-					},
-					{
-						"required": [
-							"correctAnswers",
-							"incorrect_answers"
-						]
-					},
-					{
-						"required": [
-							"correctAnswers",
+							"incorrect_answers",
 							"incorrectAnswers"
 						]
 					}
-				],
-				"properties": {
-					"correct_answers": {
-						"minItems": 1
+				},
+				{
+					"if": {
+						"required": [
+							"type"
+						],
+						"properties": {
+							"type": {
+								"const": "group"
+							}
+						}
 					},
-					"correctAnswers": {
-						"minItems": 1
+					"then": {
+						"required": [
+							"subquestions"
+						],
+						"not": {
+							"anyOf": [
+								{
+									"required": [
+										"marks"
+									]
+								},
+								{
+									"required": [
+										"hints"
+									]
+								},
+								{
+									"required": [
+										"correct_answers"
+									]
+								},
+								{
+									"required": [
+										"incorrect_answers"
+									]
+								},
+								{
+									"required": [
+										"correctAnswers"
+									]
+								},
+								{
+									"required": [
+										"incorrectAnswers"
+									]
+								}
+							]
+						}
+					},
+					"else": {
+						"allOf": [
+							{
+								"not": {
+									"required": [
+										"subquestions"
+									]
+								}
+							},
+							{
+								"if": {
+									"required": [
+										"type"
+									],
+									"properties": {
+										"type": {
+											"const": "short_answer"
+										}
+									}
+								},
+								"then": {
+									"properties": {
+										"correct_answers": {
+											"maxItems": 0
+										},
+										"incorrect_answers": {
+											"maxItems": 0
+										},
+										"correctAnswers": {
+											"maxItems": 0
+										},
+										"incorrectAnswers": {
+											"maxItems": 0
+										}
+									}
+								},
+								"else": {
+									"oneOf": [
+										{
+											"required": [
+												"correct_answers",
+												"incorrect_answers"
+											]
+										},
+										{
+											"required": [
+												"correct_answers",
+												"incorrectAnswers"
+											]
+										},
+										{
+											"required": [
+												"correctAnswers",
+												"incorrect_answers"
+											]
+										},
+										{
+											"required": [
+												"correctAnswers",
+												"incorrectAnswers"
+											]
+										}
+									],
+									"properties": {
+										"correct_answers": {
+											"minItems": 1
+										},
+										"correctAnswers": {
+											"minItems": 1
+										}
+									}
+								}
+							}
+						]
 					}
 				}
-			}
+			]
 		},
 		"QuestionMetadata": {
 			"type": "object",

@@ -1,0 +1,96 @@
+{
+  "title": "Authentication protocol · four-part practice",
+  "config": {
+    "marks_per_question": 1,
+    "default_question_count": 1
+  },
+  "questions": [
+    {
+      "id": "authentication",
+      "type": "group",
+      "question": "Alice and Bob share a secret key K. Consider the following authentication protocol.\nA → B: A, N_A\nB → A: N_B, MAC_K(N_A)\nA → B: MAC_K(N_B)\nAssume MAC is secure and each honest participant generates a fresh nonce. Answer all four parts independently.",
+      "metadata": {
+        "topic": "Authentication",
+        "study_location": "Security · Protocol analysis"
+      },
+      "explanation": "The same key and MAC input format are used in both directions. Freshness alone does not stop an active attacker from reflecting a challenge through a concurrent session.",
+      "images": [
+        {
+          "src": "images/protocol.png",
+          "alt": "Three-message Alice and Bob authentication protocol",
+          "caption": "Shared protocol: A and B use the same MAC key K."
+        }
+      ],
+      "subquestions": [
+        {
+          "id": "authentication-a",
+          "type": "short_answer",
+          "question": "What is the intended mutual authentication goal of this protocol?",
+          "marks": 1,
+          "hints": [
+            "Identify what Alice and Bob each want to verify."
+          ],
+          "images": [
+            {
+              "src": "images/mutual.png",
+              "alt": "Part a: What is the intended mutual authentication goal of this protocol?",
+              "caption": "Part (a) · Mutual analysis"
+            }
+          ],
+          "explanation": "Each participant wants evidence that the peer knows K and is participating in this execution."
+        },
+        {
+          "id": "authentication-b",
+          "type": "short_answer",
+          "question": "Can an attacker impersonate a participant by replaying messages from an earlier execution? Explain the role of fresh nonces.",
+          "marks": 1,
+          "hints": [
+            "Would an old MAC match a newly generated challenge?"
+          ],
+          "images": [
+            {
+              "src": "images/replay.png",
+              "alt": "Part b: Can an attacker impersonate a participant by replaying messages from an earlier execution? Explain the role of fresh nonces.",
+              "caption": "Part (b) · Replay analysis"
+            }
+          ],
+          "explanation": "With fresh unpredictable nonces, a MAC from an earlier execution does not authenticate the fresh challenge. Nonce reuse can make old responses usable."
+        },
+        {
+          "id": "authentication-c",
+          "type": "short_answer",
+          "question": "Describe a two-session reflection attack that lets an attacker impersonate Alice to Bob without knowing K.",
+          "marks": 2,
+          "hints": [
+            "Can Bob be asked in another session to authenticate his own challenge?"
+          ],
+          "images": [
+            {
+              "src": "images/reflection.png",
+              "alt": "Part c: Describe a two-session reflection attack that lets an attacker impersonate Alice to Bob without knowing K.",
+              "caption": "Part (c) · Reflection analysis"
+            }
+          ],
+          "explanation": "Start session 1 with nonce x. Bob sends y and MAC_K(x). Start session 2 as Alice using y as its nonce. Bob returns z and MAC_K(y). Return MAC_K(y) to finish session 1; Bob accepts the impersonator."
+        },
+        {
+          "id": "authentication-d",
+          "type": "short_answer",
+          "question": "How would you fix the protocol to prevent this reflection attack?",
+          "marks": 2,
+          "hints": [
+            "Bind the MAC to a direction, identities and the full session transcript."
+          ],
+          "images": [
+            {
+              "src": "images/fix.png",
+              "alt": "Part d: How would you fix the protocol to prevent this reflection attack?",
+              "caption": "Part (d) · Fix analysis"
+            }
+          ],
+          "explanation": "Use distinct role or direction tags (or separate directional keys), bind both identities and both nonces, and verify the intended role and fresh session context. The displayed messages illustrate domain separation, not a complete production protocol."
+        }
+      ]
+    }
+  ]
+}

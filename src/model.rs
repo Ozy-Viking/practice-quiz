@@ -75,6 +75,7 @@ pub enum QuestionType {
     #[default]
     MultipleChoice,
     ShortAnswer,
+    Group,
 }
 
 // Only omission selects a default; an explicit null is invalid.
@@ -99,9 +100,11 @@ fn deserialize_caption<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<
     String::deserialize(d).map(Some)
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(try_from = "QuestionInput")]
 pub struct QuizQuestion {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subquestions: Vec<QuizQuestion>,
     #[serde(default)]
     pub images: Vec<QuizImage>,
     pub id: String,
@@ -125,9 +128,35 @@ pub struct QuizQuestion {
     #[serde(default, alias = "hiddenInfo")]
     pub metadata: QuestionMetadata,
 }
+// Keep group serialization a valid input shape while preserving canonical flat fields.
+impl Serialize for QuizQuestion {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("images", &self.images)?;
+        map.serialize_entry("id", &self.id)?;
+        map.serialize_entry("question", &self.question)?;
+        map.serialize_entry("type", &self.kind)?;
+        if self.kind == QuestionType::Group {
+            map.serialize_entry("subquestions", &self.subquestions)?;
+        } else {
+            if let Some(marks) = self.marks {
+                map.serialize_entry("marks", &marks)?;
+            }
+            map.serialize_entry("hints", &self.hints)?;
+            map.serialize_entry("correct_answers", &self.correct_answers)?;
+            map.serialize_entry("incorrect_answers", &self.incorrect_answers)?;
+        }
+        map.serialize_entry("explanation", &self.explanation)?;
+        map.serialize_entry("metadata", &self.metadata)?;
+        map.end()
+    }
+}
 // MCQs retain their required option arrays; short answers may omit them.
 #[derive(Deserialize)]
 struct QuestionInput {
+    #[serde(default, deserialize_with = "deserialize_subquestions")]
+    subquestions: Option<Vec<QuizQuestion>>,
     #[serde(default)]
     images: Vec<QuizImage>,
     id: String,
@@ -136,8 +165,8 @@ struct QuestionInput {
     kind: QuestionType,
     #[serde(default, deserialize_with = "deserialize_marks")]
     marks: Option<f64>,
-    #[serde(default)]
-    hints: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_hints")]
+    hints: Option<Vec<String>>,
     #[serde(
         default,
         alias = "correctAnswers",
@@ -162,9 +191,43 @@ fn deserialize_options<'de, D: serde::Deserializer<'de>>(
     Vec::<String>::deserialize(d).map(Some)
 }
 
+fn deserialize_subquestions<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Vec<QuizQuestion>>, D::Error> {
+    Vec::<QuizQuestion>::deserialize(d).map(Some)
+}
+fn deserialize_hints<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Vec<String>>, D::Error> {
+    Vec::<String>::deserialize(d).map(Some)
+}
+
 impl TryFrom<QuestionInput> for QuizQuestion {
     type Error = String;
     fn try_from(input: QuestionInput) -> Result<Self, Self::Error> {
+        if input.kind == QuestionType::Group {
+            if input.subquestions.as_ref().is_none_or(Vec::is_empty) {
+                return Err("Groups require nonempty subquestions".into());
+            }
+            if input.marks.is_some()
+                || input.hints.is_some()
+                || input.correct_answers.is_some()
+                || input.incorrect_answers.is_some()
+            {
+                return Err("Groups must not have marks, hints or answer options".into());
+            }
+            if input
+                .subquestions
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|q| q.kind == QuestionType::Group)
+            {
+                return Err("Nested groups are not supported".into());
+            }
+        } else if input.subquestions.is_some() {
+            return Err("Leaf questions must not have a subquestions property".into());
+        }
         if input.kind == QuestionType::MultipleChoice
             && (input.correct_answers.is_none() || input.incorrect_answers.is_none())
         {
@@ -174,12 +237,13 @@ impl TryFrom<QuestionInput> for QuizQuestion {
             ));
         }
         Ok(Self {
+            subquestions: input.subquestions.unwrap_or_default(),
             images: input.images,
             id: input.id,
             question: input.question,
             kind: input.kind,
             marks: input.marks,
-            hints: input.hints,
+            hints: input.hints.unwrap_or_default(),
             correct_answers: input.correct_answers.unwrap_or_default(),
             incorrect_answers: input.incorrect_answers.unwrap_or_default(),
             explanation: input.explanation,
@@ -231,6 +295,7 @@ fn has_metadata_value(value: &Option<String>) -> bool {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionQuestion {
+    pub subquestions: Vec<SessionQuestion>,
     pub images: Vec<QuizImage>,
     pub id: String,
     pub text: String,
@@ -240,6 +305,80 @@ pub struct SessionQuestion {
     pub options: Vec<(String, String, String)>,
     pub correct_ids: HashSet<String>,
     pub metadata: QuestionMetadata,
+}
+
+/// Includes shared context nodes as well as answerable leaves (images and IDs).
+pub fn all_questions(questions: &[QuizQuestion]) -> impl Iterator<Item = &QuizQuestion> {
+    questions
+        .iter()
+        .flat_map(|q| std::iter::once(q).chain(q.subquestions.iter()))
+}
+
+/// A leaf's position is independent of user-provided IDs and remains safe for DOM IDs.
+pub struct SessionLeaf<'a> {
+    pub question: &'a SessionQuestion,
+    pub parent: Option<&'a SessionQuestion>,
+    pub top: usize,
+    pub part: Option<usize>,
+}
+impl SessionLeaf<'_> {
+    pub fn path(&self) -> String {
+        match self.part {
+            Some(part) => format!("{}-{}", self.top + 1, part + 1),
+            None => (self.top + 1).to_string(),
+        }
+    }
+    pub fn label(&self) -> String {
+        match self.part {
+            Some(part) => format!("Q{}({})", self.top + 1, option_label(part).to_lowercase()),
+            None => format!("Q{}", self.top + 1),
+        }
+    }
+    pub fn display_metadata(&self) -> QuestionMetadata {
+        let mut metadata = self.question.metadata.clone();
+        if let Some(parent) = self.parent {
+            if metadata.topic.is_none() {
+                metadata.topic = parent.metadata.topic.clone();
+            }
+            if metadata.study_location.is_none() {
+                metadata.study_location = parent.metadata.study_location.clone();
+            }
+        }
+        metadata
+    }
+}
+pub fn session_leaves(session: &[SessionQuestion]) -> Vec<SessionLeaf<'_>> {
+    session
+        .iter()
+        .enumerate()
+        .flat_map(|(top, q)| {
+            if q.kind == QuestionType::Group {
+                q.subquestions
+                    .iter()
+                    .enumerate()
+                    .map(|(part, question)| SessionLeaf {
+                        question,
+                        parent: Some(q),
+                        top,
+                        part: Some(part),
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                vec![SessionLeaf {
+                    question: q,
+                    parent: None,
+                    top,
+                    part: None,
+                }]
+            }
+        })
+        .collect()
+}
+pub fn find_leaf<'a>(session: &'a [SessionQuestion], id: &str) -> Option<&'a SessionQuestion> {
+    session_leaves(session)
+        .into_iter()
+        .find(|leaf| leaf.question.id == id)
+        .map(|leaf| leaf.question)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -276,7 +415,7 @@ pub fn record_hint_view(
     id: &str,
     index: usize,
 ) {
-    if session.iter().any(|q| q.id == id && index < q.hints.len()) {
+    if find_leaf(session, id).is_some_and(|q| index < q.hints.len()) {
         usage.entry(id.to_string()).or_default().insert(index);
     }
 }
@@ -414,17 +553,69 @@ pub fn results_json(
     results: &ResultsData,
 ) -> Result<String, serde_json::Error> {
     let (questions, total_score, total_max) = results;
-    if questions.len() != session.len()
-        || questions
+    let leaves = session_leaves(session);
+    let mut ids = HashSet::new();
+    let valid_ids = session
+        .iter()
+        .flat_map(|q| std::iter::once(q).chain(q.subquestions.iter()))
+        .all(|q| ids.insert(&q.id));
+    let valid_shape = session.iter().all(|q| {
+        q.marks.is_finite()
+            && q.marks > 0.0
+            && if q.kind == QuestionType::Group {
+                !q.subquestions.is_empty()
+                    && q.subquestions.iter().all(|part| {
+                        part.kind != QuestionType::Group && part.subquestions.is_empty()
+                    })
+                    && q.options.is_empty()
+                    && q.correct_ids.is_empty()
+                    && q.hints.is_empty()
+                    && q.marks == q.subquestions.iter().map(|part| part.marks).sum::<f64>()
+            } else {
+                q.subquestions.is_empty()
+            }
+    });
+    // The result list contains leaves only. Validate the retained group context against
+    // the source as well, so parent IDs and child boundaries cannot silently drift.
+    let valid_groups =
+        session
             .iter()
-            .zip(session)
-            .any(|(result, question)| result.id != question.id)
+            .filter(|q| q.kind == QuestionType::Group)
+            .all(|q| {
+                quiz.questions
+                    .iter()
+                    .find(|source| source.id == q.id && source.kind == QuestionType::Group)
+                    .is_some_and(|source| {
+                        source.subquestions.len() == q.subquestions.len()
+                            && source.subquestions.iter().zip(&q.subquestions).all(
+                                |(source, part)| source.id == part.id && source.kind == part.kind,
+                            )
+                    })
+            });
+    if !valid_ids
+        || !valid_groups
+        || !valid_shape
+        || !total_score.is_finite()
+        || !total_max.is_finite()
+        || questions.len() != leaves.len()
+        || questions.iter().zip(&leaves).any(|(result, leaf)| {
+            result.id != leaf.question.id
+                || result.max_score != leaf.question.marks
+                || !matches!(
+                    (&result.details, leaf.question.kind),
+                    (ResultDetails::ShortAnswer { .. }, QuestionType::ShortAnswer)
+                        | (
+                            ResultDetails::MultipleChoice(_),
+                            QuestionType::MultipleChoice
+                        )
+                )
+        })
     {
         return Err(<serde_json::Error as serde::ser::Error>::custom(
             "Completed results do not match the session",
         ));
     }
-    serde_json::to_string_pretty(&ResultsExport {
+    let export = ResultsExport {
         format_version: 4,
         source_manifest: &quiz.source_manifest,
         quiz_title: quiz.display_title(),
@@ -439,10 +630,39 @@ pub fn results_json(
         total_available_marks: questions.iter().map(|q| q.max_score).sum(),
         questions: questions
             .iter()
-            .zip(session)
-            .map(|(result, question)| QuestionExport::new(result, question))
+            .zip(&leaves)
+            .map(|(result, leaf)| QuestionExport::new(result, leaf.question))
             .collect(),
-    })
+    };
+    if !session.iter().any(|q| q.kind == QuestionType::Group) {
+        return serde_json::to_string_pretty(&export);
+    }
+    let mut value = serde_json::to_value(&export)?;
+    let flat = value["questions"].as_array().unwrap();
+    let mut offset = 0;
+    let nested: Vec<_> = session
+        .iter()
+        .map(|q| {
+            if q.kind == QuestionType::Group {
+                let parts = flat[offset..offset + q.subquestions.len()].to_vec();
+                offset += parts.len();
+                serde_json::json!({
+                    "type": "group", "id": q.id, "text": q.text,
+                    "images": q.images, "metadata": q.metadata,
+                    "max_score": q.marks, "subquestions": parts,
+                })
+            } else {
+                let leaf = flat[offset].clone();
+                offset += 1;
+                leaf
+            }
+        })
+        .collect();
+    value["format_version"] = 5.into();
+    value["question_count"] = session.len().into();
+    value["answerable_question_count"] = leaves.len().into();
+    value["questions"] = nested.into();
+    serde_json::to_string_pretty(&value)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -492,7 +712,7 @@ pub fn validate_quiz(quiz: &QuizFile) -> Result<(), String> {
     }
     let mut ids = HashSet::new();
     let mut total_marks = 0.0_f64;
-    for q in &quiz.questions {
+    for q in all_questions(&quiz.questions) {
         for image in &q.images {
             if image.src.trim().is_empty() || image.alt.trim().is_empty() {
                 return Err(format!(
@@ -512,6 +732,23 @@ pub fn validate_quiz(quiz: &QuizFile) -> Result<(), String> {
                 "Question {} marks must be a finite number greater than 0",
                 q.id
             ));
+        }
+        if q.kind == QuestionType::Group {
+            if q.subquestions.is_empty()
+                || q.subquestions
+                    .iter()
+                    .any(|part| part.kind == QuestionType::Group || !part.subquestions.is_empty())
+                || q.marks.is_some()
+                || !q.hints.is_empty()
+                || !q.correct_answers.is_empty()
+                || !q.incorrect_answers.is_empty()
+            {
+                return Err("Invalid group: use nonempty, one-level subquestions without parent marks, hints or options".into());
+            }
+            continue;
+        }
+        if !q.subquestions.is_empty() {
+            return Err("Leaf questions cannot have subquestions".into());
         }
         total_marks += q.marks.unwrap_or(config.marks_per_question);
         if !total_marks.is_finite() {
@@ -612,48 +849,66 @@ pub fn build_session(
     let selected: Vec<_> = questions.into_iter().take(count).collect();
     selected
         .into_iter()
-        .map(|q| {
-            let metadata = q.merged_metadata();
-            let mut all_answers: Vec<(bool, String)> = q
-                .correct_answers
-                .iter()
-                .map(|a| (true, a.clone()))
-                .chain(q.incorrect_answers.iter().map(|a| (false, a.clone())))
-                .collect();
-            let is_true_false = all_answers.len() == 2 && {
-                let texts: Vec<&str> = all_answers.iter().map(|(_, t)| t.as_str()).collect();
-                texts.iter().any(|t| t.eq_ignore_ascii_case("true"))
-                    && texts.iter().any(|t| t.eq_ignore_ascii_case("false"))
-            };
-            if is_true_false {
-                all_answers.sort_by_key(|(_, t)| !t.eq_ignore_ascii_case("true"));
-            } else {
-                all_answers.shuffle(rng);
-            }
-            let correct_ids: HashSet<String> = all_answers
-                .iter()
-                .enumerate()
-                .filter(|(_, (is_correct, _))| *is_correct)
-                .map(|(i, _)| format!("opt_{i}"))
-                .collect();
-            let options: Vec<(String, String, String)> = all_answers
-                .iter()
-                .enumerate()
-                .map(|(i, (_, text))| (format!("opt_{i}"), option_label(i), text.clone()))
-                .collect();
-            SessionQuestion {
-                images: q.images,
-                id: q.id,
-                text: q.question,
-                kind: q.kind,
-                marks: q.marks.unwrap_or(default_marks),
-                hints: q.hints,
-                options,
-                correct_ids,
-                metadata,
-            }
-        })
+        .map(|q| build_session_question(q, default_marks, rng))
         .collect()
+}
+
+fn build_session_question(
+    q: QuizQuestion,
+    default_marks: f64,
+    rng: &mut impl rand::Rng,
+) -> SessionQuestion {
+    use rand::seq::SliceRandom;
+    let subquestions: Vec<_> = q
+        .subquestions
+        .iter()
+        .cloned()
+        .map(|part| build_session_question(part, default_marks, rng))
+        .collect();
+    let metadata = q.merged_metadata();
+    let mut all_answers: Vec<(bool, String)> = q
+        .correct_answers
+        .iter()
+        .map(|a| (true, a.clone()))
+        .chain(q.incorrect_answers.iter().map(|a| (false, a.clone())))
+        .collect();
+    let is_true_false = all_answers.len() == 2 && {
+        let texts: Vec<&str> = all_answers.iter().map(|(_, t)| t.as_str()).collect();
+        texts.iter().any(|t| t.eq_ignore_ascii_case("true"))
+            && texts.iter().any(|t| t.eq_ignore_ascii_case("false"))
+    };
+    if is_true_false {
+        all_answers.sort_by_key(|(_, t)| !t.eq_ignore_ascii_case("true"));
+    } else {
+        all_answers.shuffle(rng);
+    }
+    let correct_ids: HashSet<String> = all_answers
+        .iter()
+        .enumerate()
+        .filter(|(_, (is_correct, _))| *is_correct)
+        .map(|(i, _)| format!("opt_{i}"))
+        .collect();
+    let options: Vec<(String, String, String)> = all_answers
+        .iter()
+        .enumerate()
+        .map(|(i, (_, text))| (format!("opt_{i}"), option_label(i), text.clone()))
+        .collect();
+    SessionQuestion {
+        images: q.images,
+        id: q.id,
+        text: q.question,
+        kind: q.kind,
+        marks: if q.kind == QuestionType::Group {
+            subquestions.iter().map(|q: &SessionQuestion| q.marks).sum()
+        } else {
+            q.marks.unwrap_or(default_marks)
+        },
+        subquestions,
+        hints: q.hints,
+        options,
+        correct_ids,
+        metadata,
+    }
 }
 
 fn option_label(mut index: usize) -> String {
@@ -681,6 +936,13 @@ pub fn shuffle_session(session: &mut [SessionQuestion], rng: &mut impl rand::Rng
 
     shuffle_changed(session, rng);
     for question in session {
+        shuffle_options(question, rng);
+        for part in &mut question.subquestions {
+            shuffle_options(part, rng);
+        }
+    }
+
+    fn shuffle_options(question: &mut SessionQuestion, rng: &mut impl rand::Rng) {
         let is_true_false = question.options.len() == 2
             && question
                 .options
@@ -746,7 +1008,8 @@ pub fn build_results(
     let mut results = Vec::new();
     let mut total_score = 0.0_f64;
     let mut total_max = 0.0_f64;
-    for sq in session {
+    for leaf in session_leaves(session) {
+        let sq = leaf.question;
         let viewed_hint_indices = hint_usage
             .get(&sq.id)
             .into_iter()
@@ -844,6 +1107,238 @@ mod tests {
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 
+    fn group_quiz() -> QuizFile {
+        serde_json::from_str(include_str!("../examples/authentication/quiz.json")).unwrap()
+    }
+
+    #[test]
+    fn multipart_validation_rejects_invalid_shapes_including_presence_of_empty_fields() {
+        let valid: serde_json::Value =
+            serde_json::from_str(include_str!("../examples/authentication/quiz.json")).unwrap();
+        for field in [
+            "marks",
+            "hints",
+            "correct_answers",
+            "correctAnswers",
+            "incorrect_answers",
+            "incorrectAnswers",
+        ] {
+            let mut bad = valid.clone();
+            bad["questions"][0][field] = if field == "marks" {
+                1.into()
+            } else {
+                serde_json::json!([])
+            };
+            assert!(serde_json::from_value::<QuizFile>(bad).is_err(), "{field}");
+        }
+        for parts in [
+            serde_json::Value::Null,
+            serde_json::json!([]),
+            serde_json::json!([null]),
+        ] {
+            let mut bad = valid.clone();
+            bad["questions"][0]["subquestions"] = parts;
+            assert!(serde_json::from_value::<QuizFile>(bad).is_err());
+        }
+        let mut bad = valid.clone();
+        bad["questions"][0]["subquestions"][0] = valid["questions"][0].clone();
+        assert!(serde_json::from_value::<QuizFile>(bad).is_err());
+        for parts in [serde_json::Value::Null, serde_json::json!([])] {
+            let mut bad = valid["questions"][0]["subquestions"][0].clone();
+            bad["subquestions"] = parts;
+            assert!(serde_json::from_value::<QuizQuestion>(bad).is_err());
+        }
+    }
+
+    #[test]
+    fn multipart_ids_images_and_finite_marks_are_checked_on_all_nodes() {
+        let mut quiz = group_quiz();
+        validate_quiz(&quiz).unwrap();
+        assert_eq!(all_questions(&quiz.questions).count(), 5);
+        quiz.questions[0].subquestions[0].id = quiz.questions[0].id.clone();
+        assert!(validate_quiz(&quiz).unwrap_err().contains("Duplicate"));
+        quiz = group_quiz();
+        quiz.questions[0].subquestions[1].id = quiz.questions[0].subquestions[0].id.clone();
+        assert!(validate_quiz(&quiz).unwrap_err().contains("Duplicate"));
+        for shared in [true, false] {
+            quiz = group_quiz();
+            let q = if shared {
+                &mut quiz.questions[0]
+            } else {
+                &mut quiz.questions[0].subquestions[0]
+            };
+            q.images[0].alt = " \n".into();
+            assert!(validate_quiz(&quiz).unwrap_err().contains("nonblank"));
+        }
+        for marks in [f64::NAN, f64::INFINITY, 0.0, -1.0] {
+            quiz = group_quiz();
+            quiz.questions[0].subquestions[0].marks = Some(marks);
+            assert!(validate_quiz(&quiz).is_err());
+        }
+        quiz = group_quiz();
+        for part in &mut quiz.questions[0].subquestions {
+            part.marks = Some(f64::MAX);
+        }
+        assert!(validate_quiz(&quiz).unwrap_err().contains("finite"));
+    }
+
+    #[test]
+    fn multipart_model_round_trips_and_export_rejects_changed_parent_boundaries() {
+        let quiz = group_quiz();
+        let serialized = serde_json::to_string(&quiz).unwrap();
+        assert_eq!(serde_json::from_str::<QuizFile>(&serialized).unwrap(), quiz);
+        let session = build_seeded_session(&quiz.questions, 1, 42, 1.0);
+        for case in 0..4 {
+            let mut bad = session.clone();
+            match case {
+                0 => bad[0].id = "different-parent".into(),
+                1 => bad[0].subquestions.swap(0, 1),
+                2 => {
+                    bad[0].subquestions.pop();
+                }
+                _ => bad[0].subquestions[0].kind = QuestionType::Group,
+            }
+            let results = build_results(
+                &bad,
+                &Responses::new(),
+                &HintUsage::new(),
+                &quiz.effective_config(),
+            );
+            assert!(results_json(&quiz, "quiz.zip", 42, &bad, &results).is_err());
+        }
+    }
+
+    #[test]
+    fn multipart_progress_hints_results_and_v5_export_are_leaf_based() {
+        let mut quiz = group_quiz();
+        quiz.questions[0]
+            .subquestions
+            .push(sample_quiz().questions[0].clone());
+        let session = build_seeded_session(&quiz.questions, 1, 42, 1.0);
+        let leaves = session_leaves(&session);
+        assert_eq!(leaves.len(), 5);
+        assert_eq!(leaves[0].label(), "Q1(a)");
+        assert_eq!(leaves[4].path(), "1-5");
+        assert_eq!(session[0].marks, 7.0);
+        assert_eq!(
+            leaves[0].display_metadata().topic,
+            session[0].metadata.topic
+        );
+        assert_eq!(leaves[0].question.metadata.topic, None);
+        let mut responses = Responses::new();
+        responses.insert(
+            leaves[0].question.id.clone(),
+            Response::Text("  answer\n日本語  ".into()),
+        );
+        responses.insert(leaves[1].question.id.clone(), Response::Text(" \t ".into()));
+        let mc = leaves[4].question;
+        responses.insert(mc.id.clone(), Response::Choices(mc.correct_ids.clone()));
+        let mut hints = HintUsage::new();
+        record_hint_view(&session, &mut hints, &leaves[0].question.id, 0);
+        record_hint_view(&session, &mut hints, &session[0].id, 0);
+        let results = build_results(&session, &responses, &hints, &quiz.effective_config());
+        assert_eq!((results.1, results.2), (1.0, 1.0));
+        assert_eq!(results.0.len(), 5);
+        assert_eq!(results.0[1].status, QuestionStatus::UnansweredUnmarked);
+        let json: serde_json::Value = serde_json::from_str(
+            &results_json(&quiz, "authentication.zip", 42, &session, &results).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(json["format_version"], 5);
+        assert_eq!(json["question_count"], 1);
+        assert_eq!(json["answerable_question_count"], 5);
+        assert_eq!(json["scored_question_count"], 1);
+        assert_eq!(json["total_available_marks"], 7.0);
+        let parent = &json["questions"][0];
+        assert!(parent.get("status").is_none());
+        assert!(parent.get("score").is_none());
+        assert!(parent.get("response").is_none());
+        assert_eq!(parent["subquestions"][0]["response"], "  answer\n日本語  ");
+        assert_eq!(
+            parent["subquestions"][0]["viewed_hint_indices"],
+            serde_json::json!([0])
+        );
+        assert_eq!(
+            parent["subquestions"][0]["images"][0]["src"],
+            "images/mutual.png"
+        );
+    }
+
+    #[test]
+    fn multipart_selection_and_rerun_shuffle_keep_parts_in_source_order() {
+        let mut quiz = group_quiz();
+        quiz.questions.extend(sample_quiz().questions);
+        for seed in 0..20 {
+            let mut session = build_seeded_session(&quiz.questions, 4, seed, 1.0);
+            shuffle_session(&mut session, &mut SmallRng::seed_from_u64(u64::from(seed)));
+            let group = session
+                .iter()
+                .find(|q| q.kind == QuestionType::Group)
+                .unwrap();
+            assert_eq!(
+                group
+                    .subquestions
+                    .iter()
+                    .map(|q| q.id.as_str())
+                    .collect::<Vec<_>>(),
+                vec![
+                    "authentication-a",
+                    "authentication-b",
+                    "authentication-c",
+                    "authentication-d"
+                ]
+            );
+            assert_eq!(session_leaves(&session).len(), 7);
+        }
+        // A quiz containing groups still exports v4 when the selected attempt is flat.
+        let session = build_seeded_session(&quiz.questions[1..], 1, 42, 1.0);
+        let results = build_results(
+            &session,
+            &Responses::new(),
+            &HintUsage::new(),
+            &quiz.effective_config(),
+        );
+        let json: serde_json::Value = serde_json::from_str(
+            &results_json(&quiz, "mixed.json", 42, &session, &results).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(json["format_version"], 4);
+        assert!(json.get("answerable_question_count").is_none());
+        assert!(json["questions"][0].get("subquestions").is_none());
+    }
+
+    #[test]
+    fn multipart_exports_reject_mismatched_leaf_ids_order_counts_and_kinds() {
+        let quiz = group_quiz();
+        let session = build_seeded_session(&quiz.questions, 1, 42, 1.0);
+        let results = build_results(
+            &session,
+            &Responses::new(),
+            &HintUsage::new(),
+            &quiz.effective_config(),
+        );
+        for case in 0..4 {
+            let mut bad = results.clone();
+            match case {
+                0 => {
+                    bad.0.pop();
+                }
+                1 => bad.0.swap(0, 1),
+                2 => bad.0[0].id = "unknown".into(),
+                _ => {
+                    bad.0[0].details = ResultDetails::MultipleChoice(ChoiceResult {
+                        score: 0.0,
+                        selected_answers: vec![],
+                        correct_answers: vec![],
+                        missed_correct_answers: vec![],
+                        wrong_selected_answers: vec![],
+                    })
+                }
+            }
+            assert!(results_json(&quiz, "quiz.zip", 42, &session, &bad).is_err());
+        }
+    }
+
     fn sample_quiz() -> QuizFile {
         QuizFile {
             source_manifest: None,
@@ -859,6 +1354,7 @@ mod tests {
             negative_marks: None,
             questions: vec![
                 QuizQuestion {
+                    subquestions: Vec::new(),
                     images: Vec::new(),
                     kind: QuestionType::MultipleChoice,
                     marks: None,
@@ -878,6 +1374,7 @@ mod tests {
                     },
                 },
                 QuizQuestion {
+                    subquestions: Vec::new(),
                     images: Vec::new(),
                     kind: QuestionType::MultipleChoice,
                     marks: None,
@@ -897,6 +1394,7 @@ mod tests {
                     },
                 },
                 QuizQuestion {
+                    subquestions: Vec::new(),
                     images: Vec::new(),
                     kind: QuestionType::MultipleChoice,
                     marks: None,
@@ -1021,6 +1519,7 @@ mod tests {
     fn export_v4_retains_all_options_and_classifies_labels() {
         let quiz = sample_quiz();
         let session = vec![SessionQuestion {
+            subquestions: Vec::new(),
             images: Vec::new(),
             kind: QuestionType::MultipleChoice,
             marks: 2.0,
