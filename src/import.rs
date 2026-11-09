@@ -408,7 +408,7 @@ pub async fn load(
     quiz.source_manifest = manifest;
     let mut assets = AssetStore::default();
     let mut actual_total = bytes.len() as u64;
-    for question in &quiz.questions {
+    for question in crate::model::all_questions(&quiz.questions) {
         for image in &question.images {
             if !current() {
                 return Err("Import superseded".into());
@@ -470,6 +470,41 @@ mod tests {
         task::{Context, Poll, Waker},
     };
     use zip::write::SimpleFileOptions;
+
+    #[test]
+    fn multipart_archive_loads_both_shared_and_part_images() {
+        let bytes = include_bytes!("../examples/authentication/authentication-quiz.zip").to_vec();
+        let source = ImportSource::Archive(Rc::new(Archive::new(bytes).unwrap()));
+        let (quiz, assets) = load_now(source, Some("quiz.json")).unwrap();
+        assert_eq!(assets.urls.len(), 5);
+        assert_eq!(quiz.source_manifest.as_deref(), Some("quiz.json"));
+        let session = crate::model::build_seeded_session(&quiz.questions, 1, 42, 1.0);
+        assert_eq!(session[0].images[0].src, "images/protocol.png");
+        assert_eq!(
+            session[0].subquestions[0].images[0].src,
+            "images/mutual.png"
+        );
+        let results = crate::model::build_results(
+            &session,
+            &HashMap::new(),
+            &HashMap::new(),
+            &quiz.effective_config(),
+        );
+        let json: serde_json::Value = serde_json::from_str(
+            &crate::model::results_json(&quiz, "authentication-quiz.zip", 42, &session, &results)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(json["source_manifest"], "quiz.json");
+        assert_eq!(
+            json["questions"][0]["images"][0]["src"],
+            "images/protocol.png"
+        );
+        assert_eq!(
+            json["questions"][0]["subquestions"][3]["images"][0]["src"],
+            "images/fix.png"
+        );
+    }
 
     fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));

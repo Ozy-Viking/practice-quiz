@@ -26,7 +26,7 @@
 |---|---|---|
 | `id` | Yes | String unique within the quiz. |
 | `question` | Yes | Prompt text. |
-| `type` | No | `multiple_choice` (default) or `short_answer` (unmarked text response). |
+| `type` | No | `multiple_choice` (default), `short_answer` (unmarked text response), or `group` (shared context and ordered parts). |
 | `correct_answers` | MCQ only | Nonempty array of correct strings. Alias: `correctAnswers`. For short answers, omit or use `[]`. |
 | `incorrect_answers` | MCQ only | Array of wrong strings; may be empty. Alias: `incorrectAnswers`. For short answers, omit or use `[]`. |
 | `marks` | No | Positive available marks, including fractions; overrides the quiz default. |
@@ -176,9 +176,34 @@ Save as `quiz.json` at the root of `biology.zip`, with `cells.png` in its `image
 }
 ```
 
+## Multipart questions
+
+Upload [the authentication quiz ZIP](examples/authentication/authentication-quiz.zip) for a complete four-part question with **four independent textareas**, a shared protocol diagram, and an image and hint on every part. Its [JSON](examples/authentication/quiz.json) and [diagram generator](examples/authentication/generate.py) are included. Local images require the ZIP; uploading that JSON alone cannot resolve them.
+
+Use an explicit `"type": "group"` with shared `question`, optional `images`, `metadata` (or `hiddenInfo`), and `explanation`, plus a nonempty `subquestions` array. Each child is an ordinary `short_answer` or `multiple_choice` question with its own ID, prompt, images, hints and optional positive marks. For example:
+
+```json
+{
+  "questions": [{
+    "id": "protocol", "type": "group", "question": "Shared protocol context.\nAnswer each part.",
+    "metadata": { "topic": "Authentication" },
+    "subquestions": [
+      { "id": "protocol-a", "type": "short_answer", "question": "State the goal.", "marks": 1 },
+      { "id": "protocol-b", "type": "short_answer", "question": "Explain a replay.", "marks": 1 }
+    ]
+  }]
+}
+```
+
+Groups cannot nest, be empty, or have their own `marks`, `hints` or answer option fields (including aliases and empty arrays). Leaves must omit `subquestions` entirely; `[]` and `null` are rejected. IDs must be globally unique across groups and parts; this is checked by the runtime, beyond JSON Schema validation. Marks and the sum of all leaf marks must be finite and positive.
+
+Question counts, seeded selection, filters and rerun shuffling operate on whole top-level questions. Selecting one group includes every part in source order. Group metadata drives filtering; a part can display the parent's topic/location when its own is absent, while exports retain separate metadata. Progress, available marks and scores count each answerable leaf once. Short answers remain unmarked. Shared context and explanations appear once; responses remain separate. All prompt images, including existing flat questions and enlarged images, are centered and responsive.
+
 ## Results JSON
 
 **Copy Results JSON** and **Download Results JSON** export the same completed attempt.
+
+Flat selected sessions retain **format version 4** and its existing fields. A selected session containing any group uses **version 5**: `question_count` counts top-level questions, `answerable_question_count` counts leaves, and `scored_question_count` counts MCQ leaves. Group entries contain `type: "group"`, `id`, `text`, `images`, `metadata`, `max_score` (sum of child available marks) and ordered nested `subquestions`. They have no response, status or awarded score. Leaf entries retain the v4 result fields below. Source filenames, manifest paths and original image references are preserved.
 
 | Quiz field | Meaning |
 |---|---|

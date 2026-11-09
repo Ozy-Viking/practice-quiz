@@ -148,6 +148,9 @@ pub fn ConfiguringView(
     rsx! {
         div { class: "card config-card",
             h2 { "{q.display_title()}" }
+            if q.questions.iter().any(|q| q.kind == crate::model::QuestionType::Group) {
+                p { class: "hint", "Question counts and filters select whole questions. Selecting one multipart question includes all its parts, in their original order." }
+            }
             p { class: "file-label", "Loaded: {file_name.read()} ({total_q} questions)" }
             if allow_neg {
                 p { class: "config-flag negative-enabled", "⚠ Negative marking enabled" }
