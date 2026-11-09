@@ -53,6 +53,12 @@ Use either a field's canonical name or its alias, never both.
 | `src` | Yes | Absolute HTTPS URL without credentials, or an exact, case-sensitive path relative to the detected package root: the ZIP root or its one enclosing quiz folder. Replace illustrative `example.org` URLs with public image URLs. |
 | `alt` | Yes | Nonblank alternative text describing the image. |
 | `caption` | No | Plain-text caption below the image. |
+| `width` | No | Maximum display width in CSS pixels, as an integer from 1 to 4,294,967,295. |
+| `height` | No | Maximum display height in CSS pixels, as an integer from 1 to 4,294,967,295; replaces the default 22rem height limit. |
+
+For example, `"images": [{"src": "images/protocol.png", "alt": "Authentication protocol", "width": 640, "height": 400}]` fits the image inside a 640 × 400 pixel area. Set either dimension or both. Images preserve their aspect ratio, stay within their container on narrow screens, and are never stretched beyond their natural size. Omit unused dimensions; `null`, zero, negative numbers, fractions and strings are rejected. Images without dimensions keep their existing automatic sizing.
+
+Sizing applies to flat questions, shared group context and individual subquestions, in both the quiz and results. Click an image to enlarge it independently of these limits. Results JSON preserves the supplied dimensions with the original image references.
 
 | Upload | Requirements |
 |---|---|

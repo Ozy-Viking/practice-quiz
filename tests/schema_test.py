@@ -65,6 +65,21 @@ class SchemaTests(unittest.TestCase):
                             question[name] = []
                 self.assertEqual(self.validator.is_valid({'questions': [question]}), correct != 3 and incorrect != 3)
 
+    def test_image_dimensions(self):
+        values = [(1, True), (640, True), (4294967295, True),
+                  (1.0, True), (640.0, True), (6.4e2, True), (1e2, True),
+                  (4294967295.0, True), (4.294967295e9, True),
+                  (None, False), (0, False), (-1, False), (1.5, False),
+                  ('200', False), (True, False), (4294967296, False)]
+        for field, (value, accepted) in itertools.product(['width', 'height'], values):
+            with self.subTest(field=field, value=value):
+                image = {'src': 'photo.png', 'alt': 'Photo', field: value}
+                leaf = {'id': 'leaf', 'question': 'Q', 'type': 'short_answer', 'images': [image]}
+                group = {'id': 'group', 'question': 'Context', 'type': 'group',
+                         'images': [image], 'subquestions': [leaf]}
+                for question in [leaf, group]:
+                    self.assertEqual(self.validator.is_valid({'questions': [question]}), accepted)
+
 
 if __name__ == '__main__':
     unittest.main()
