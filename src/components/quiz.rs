@@ -95,6 +95,8 @@ pub fn QuizView(
                                         textarea {
                                             id: "response-{idx}",
                                             aria_labelledby: "number-{idx} question-{idx}",
+                                            autocomplete: "off",
+                                            "data-1p-ignore": "true",
                                             class: "short-answer-input",
                                             rows: "5",
                                             value: "{text}",

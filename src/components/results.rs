@@ -384,6 +384,12 @@ pub fn ResultsView(
                             p { class: "question-text", "{parent.text}" }
                             super::QuestionImages { images: parent.images.clone() }
                             p { class: "available-marks", "Available marks: {parent.marks} across all parts" }
+                            if let Some(timestamp) = metadata_value(&parent.metadata.timestamp) {
+                                p { class: "study-location", "Timestamp: {timestamp}" }
+                            }
+                            if let Some(answer) = metadata_value(&parent.metadata.answer) {
+                                p { class: "study-answer", "Original answer key: {answer}" }
+                            }
                             if let Some(explanation) = metadata_value(&parent.metadata.explanation) {
                                 p { class: "study-notes", "Explanation: {explanation}" }
                             }
