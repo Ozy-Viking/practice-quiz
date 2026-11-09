@@ -94,6 +94,31 @@ pub struct QuizImage {
         deserialize_with = "deserialize_caption"
     )]
     pub caption: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_image_dimension"
+    )]
+    pub width: Option<std::num::NonZeroU32>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_image_dimension"
+    )]
+    pub height: Option<std::num::NonZeroU32>,
+}
+
+fn deserialize_image_dimension<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<std::num::NonZeroU32>, D::Error> {
+    // JSON Schema treats integral decimal and exponent forms as integers too.
+    let value = f64::deserialize(d)?;
+    if value.fract() != 0.0 || !(1.0..=f64::from(u32::MAX)).contains(&value) {
+        return Err(serde::de::Error::custom(
+            "image dimensions must be whole numbers from 1 to 4294967295",
+        ));
+    }
+    Ok(std::num::NonZeroU32::new(value as u32))
 }
 
 fn deserialize_caption<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
@@ -1107,6 +1132,112 @@ mod tests {
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 
+    #[test]
+    fn image_dimensions_accept_positive_integers_and_reject_invalid_values() {
+        let original =
+            serde_json::json!({"src": "https://example.org/image.png", "alt": "Diagram"});
+        let image: QuizImage = serde_json::from_value(original.clone()).unwrap();
+        assert_eq!(serde_json::to_value(image).unwrap(), original);
+        for field in ["width", "height"] {
+            for value in [serde_json::json!(1), serde_json::json!(u32::MAX)] {
+                let mut input = original.clone();
+                input[field] = value;
+                let image: QuizImage = serde_json::from_value(input.clone()).unwrap();
+                assert_eq!(serde_json::to_value(image).unwrap(), input);
+            }
+            for value in [
+                serde_json::Value::Null,
+                serde_json::json!(0),
+                serde_json::json!(-1),
+                serde_json::json!(1.5),
+                serde_json::json!("200"),
+                serde_json::json!(true),
+                serde_json::json!(u64::from(u32::MAX) + 1),
+            ] {
+                let mut input = original.clone();
+                input[field] = value;
+                assert!(
+                    serde_json::from_value::<QuizImage>(input.clone()).is_err(),
+                    "{input}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn image_dimensions_accept_schema_valid_integral_numeric_forms() {
+        for field in ["width", "height"] {
+            for (value, expected) in [
+                ("1.0", 1),
+                ("640.0", 640),
+                ("6.4e2", 640),
+                ("1e2", 100),
+                ("4294967295.0", u32::MAX),
+                ("4.294967295e9", u32::MAX),
+            ] {
+                let input = format!(
+                    r#"{{"src":"https://example.org/image.png","alt":"Diagram","{field}":{value}}}"#
+                );
+                let image: QuizImage = serde_json::from_str(&input).unwrap();
+                let dimension = if field == "width" {
+                    image.width
+                } else {
+                    image.height
+                };
+                assert_eq!(dimension.unwrap().get(), expected, "{input}");
+            }
+            for value in ["0.0", "-1e2", "1.5", "4.294967296e9"] {
+                let input = format!(
+                    r#"{{"src":"https://example.org/image.png","alt":"Diagram","{field}":{value}}}"#
+                );
+                assert!(
+                    serde_json::from_str::<QuizImage>(&input).is_err(),
+                    "{input}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn image_dimensions_survive_sessions_reruns_and_flat_and_grouped_exports() {
+        let sized_image = serde_json::json!({
+            "src": "https://example.org/diagram.png", "alt": "Diagram",
+            "caption": "Sized diagram", "width": 640, "height": 400
+        });
+        let flat = serde_json::json!({
+            "id": "flat", "question": "Describe this diagram.", "type": "short_answer",
+            "images": [sized_image.clone()]
+        });
+        let group = serde_json::json!({
+            "id": "group", "question": "Shared diagram", "type": "group",
+            "images": [sized_image.clone()], "subquestions": [flat.clone()]
+        });
+        for question in [flat, group] {
+            let quiz: QuizFile =
+                serde_json::from_value(serde_json::json!({"questions": [question]})).unwrap();
+            validate_quiz(&quiz).unwrap();
+            let mut session = build_seeded_session(&quiz.questions, 1, 42, 1.0);
+            shuffle_session(&mut session, &mut SmallRng::seed_from_u64(7));
+            let results = build_results(
+                &session,
+                &Responses::new(),
+                &HintUsage::new(),
+                &quiz.effective_config(),
+            );
+            let exported: serde_json::Value = serde_json::from_str(
+                &results_json(&quiz, "sized.json", 42, &session, &results).unwrap(),
+            )
+            .unwrap();
+            let parent = &exported["questions"][0];
+            assert_eq!(parent["images"][0], sized_image);
+            if session[0].kind == QuestionType::Group {
+                assert_eq!(exported["format_version"], 5);
+                assert_eq!(parent["subquestions"][0]["images"][0], sized_image);
+            } else {
+                assert_eq!(exported["format_version"], 4);
+            }
+        }
+    }
     fn group_quiz() -> QuizFile {
         serde_json::from_str(include_str!("../examples/authentication/quiz.json")).unwrap()
     }

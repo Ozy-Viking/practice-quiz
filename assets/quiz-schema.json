@@ -379,6 +379,18 @@
 				"caption": {
 					"type": "string",
 					"description": "Optional plain-text caption shown below the image."
+				},
+				"width": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 4294967295,
+					"description": "Optional maximum display width in CSS pixels. Preserves aspect ratio and fits the container without upscaling. Does not limit the enlarged image."
+				},
+				"height": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 4294967295,
+					"description": "Optional maximum display height in CSS pixels, replacing the default 22rem limit. Preserves aspect ratio without upscaling. Does not limit the enlarged image."
 				}
 			}
 		}

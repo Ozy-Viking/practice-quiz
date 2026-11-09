@@ -45,7 +45,12 @@ fn Figure(image: QuizImage) -> Element {
                         #[cfg(not(target_arch = "wasm32"))]
                         let _ = &open_id;
                     },
-                    img { src: "{src}", alt: "{image.alt}", referrerpolicy: "no-referrer", onerror: move |_| failed.set(true) }
+                    img {
+                        src: "{src}", alt: "{image.alt}", referrerpolicy: "no-referrer",
+                        max_width: image.width.map(|width| format!("min(100%, {width}px)")),
+                        max_height: image.height.map(|height| format!("{height}px")),
+                        onerror: move |_| failed.set(true)
+                    }
                 }
             }
             if let Some(caption) = &image.caption { figcaption { "{caption}" } }
